@@ -1,0 +1,22 @@
+{
+  "name": "catrewrite",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @catrewrite/app",
+    "build": "npm run build -w @catrewrite/core && npm run build -w @catrewrite/app",
+    "test": "npm run test -w @catrewrite/core && npm run test -w @catrewrite/app"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8",
+    "vue-tsc": "^2.2.0"
+  },
+  "packageManager": "npm@11.7.0"
+}
