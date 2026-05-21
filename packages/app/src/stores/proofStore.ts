@@ -46,6 +46,8 @@ export interface DiagramRegionView extends DiagramRegion {
   equationText?: string;
   equationLatex?: string;
   errorText?: string;
+  isOuterGoal?: boolean;
+  isSubgoal?: boolean;
 }
 
 export const useProofStore = defineStore("proof", () => {
@@ -95,6 +97,7 @@ export const useProofStore = defineStore("proof", () => {
     activeProofTarget.value ? latexEquation(activeProofTarget.value.equation) : ""
   );
   const activeProofStatus = computed(() => activeProofTarget.value?.status ?? "open");
+  const canRunTactic = computed(() => Boolean(activeProofTarget.value) && activeProofStatus.value !== "proved");
   const activeProofSteps = computed(() => activeProofTarget.value?.proofSteps ?? proofState.value?.proofLog ?? []);
   const localDiagramRules = computed<RewriteRule[]>(() =>
     diagramProofState.value ? diagramSubgoalRules(diagramProofState.value) : []
@@ -185,8 +188,15 @@ export const useProofStore = defineStore("proof", () => {
   );
   const provedRegionIds = computed(() => diagramProofState.value?.provedRegionIds ?? []);
   const selectedRegionId = computed(() => selectedSubgoal.value?.regionId ?? selectedDiagramRegionId.value);
-  const canCompleteBySubgoals = computed(() => diagramSubgoals.value.length > 0 && diagramSubgoals.value.every((subgoal) => subgoal.status === "proved"));
+  const canCompleteBySubgoals = computed(() =>
+    activeGoal.value?.status === "open" &&
+    diagramSubgoals.value.length > 0 &&
+    diagramSubgoals.value.every((subgoal) => subgoal.status === "proved")
+  );
   const canSplitGoal = computed(() => (diagramProofState.value ? splittableRegions(diagramProofState.value).length > 0 : false));
+  const canAddAllRegionSubgoals = computed(() =>
+    diagramRegions.value.some((region) => !region.isOuterGoal && !region.isSubgoal)
+  );
 
   function elaborate(): void {
     try {
@@ -217,6 +227,11 @@ export const useProofStore = defineStore("proof", () => {
     }
 
     try {
+      if (!canRunTactic.value) {
+        reportError("The selected proof target is already proved.");
+        return;
+      }
+
       if (selectedSubgoal.value) {
         proveSubgoal(selectedSubgoal.value.id);
       } else if (activeGoal.value) {
@@ -374,6 +389,12 @@ export const useProofStore = defineStore("proof", () => {
     }
 
     try {
+      const subgoal = diagramProofState.value.subgoals.find((candidate) => candidate.id === subgoalId);
+      if (subgoal?.status === "proved") {
+        reportError("The selected diagram subgoal is already proved.");
+        return;
+      }
+
       const context = parseContext(contextText.value);
       diagramProofState.value = proveDiagramSubgoal(
         context,
@@ -413,6 +434,35 @@ export const useProofStore = defineStore("proof", () => {
       diagramProofState.value = createSubgoalFromRegion(context, currentDiagramProofState, selectedDiagramRegionId.value);
       selectedSubgoalId.value =
         diagramProofState.value.subgoals.find((subgoal) => subgoal.regionId === selectedDiagramRegionId.value)?.id ??
+        diagramProofState.value.subgoals.at(-1)?.id;
+      selectedDiagramRegionId.value = undefined;
+      error.value = undefined;
+    } catch (caught) {
+      reportError(caught);
+    }
+  }
+
+  function addAllRegionSubgoals(): void {
+    try {
+      const context = parseContext(contextText.value);
+      const currentDiagram = diagram.value ?? baseDiagram(context, parseEquation(goalText.value, context));
+      let currentDiagramProofState = diagramProofState.value ?? createDiagramProofState(currentDiagram);
+      const candidateRegionIds = diagramRegions.value
+        .filter((region) => !region.isOuterGoal && !region.isSubgoal)
+        .map((region) => region.id);
+
+      if (candidateRegionIds.length === 0) {
+        reportError("No available regions to add as subgoals.");
+        return;
+      }
+
+      for (const regionId of candidateRegionIds) {
+        currentDiagramProofState = createSubgoalFromRegion(context, currentDiagramProofState, regionId);
+      }
+
+      diagramProofState.value = currentDiagramProofState;
+      selectedSubgoalId.value =
+        diagramProofState.value.subgoals.find((subgoal) => subgoal.status !== "proved")?.id ??
         diagramProofState.value.subgoals.at(-1)?.id;
       selectedDiagramRegionId.value = undefined;
       error.value = undefined;
@@ -549,12 +599,17 @@ export const useProofStore = defineStore("proof", () => {
   }
 
   function describeRegions(regions: DiagramRegion[], currentDiagram: Diagram): DiagramRegionView[] {
+    const outerGoalRegionId = diagramProofState.value?.outerGoalRegionId ?? currentDiagram.regions[0]?.id;
+    const subgoalRegionIds = new Set(diagramProofState.value?.subgoals.map((subgoal) => subgoal.regionId) ?? []);
+
     let context: ReturnType<typeof parseContext>;
     try {
       context = parseContext(contextText.value);
     } catch (caught) {
       return regions.map((region) => ({
         ...region,
+        isOuterGoal: region.id === outerGoalRegionId,
+        isSubgoal: subgoalRegionIds.has(region.id),
         errorText: caught instanceof Error ? caught.message : String(caught)
       }));
     }
@@ -563,12 +618,16 @@ export const useProofStore = defineStore("proof", () => {
       try {
         return {
           ...region,
+          isOuterGoal: region.id === outerGoalRegionId,
+          isSubgoal: subgoalRegionIds.has(region.id),
           equationText: prettyEquation(regionEquation(context, currentDiagram, region.leftPath, region.rightPath)),
           equationLatex: latexEquation(regionEquation(context, currentDiagram, region.leftPath, region.rightPath))
         };
       } catch (caught) {
         return {
           ...region,
+          isOuterGoal: region.id === outerGoalRegionId,
+          isSubgoal: subgoalRegionIds.has(region.id),
           errorText: caught instanceof Error ? caught.message : String(caught)
         };
       }
@@ -596,6 +655,7 @@ export const useProofStore = defineStore("proof", () => {
     activeProofEquation,
     activeProofEquationLatex,
     activeProofStatus,
+    canRunTactic,
     activeProofSteps,
     inspection,
     homType,
@@ -617,6 +677,7 @@ export const useProofStore = defineStore("proof", () => {
     provedRegionIds,
     canCompleteBySubgoals,
     canSplitGoal,
+    canAddAllRegionSubgoals,
     activePathSide,
     isPathSelectionMode,
     leftPath,
@@ -643,6 +704,7 @@ export const useProofStore = defineStore("proof", () => {
     selectProofTarget,
     selectDiagramRegion,
     addSelectedRegionSubgoal,
+    addAllRegionSubgoals,
     completeGoalBySubgoals,
     selectDiagramArrow,
     selectDiagramNode,

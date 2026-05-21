@@ -12,6 +12,8 @@ import {
   map,
   morphism,
   object,
+  parseContext,
+  parseEquation,
   runTactic,
   type Context,
   typecheckEquation,
@@ -49,7 +51,9 @@ describe("tactics", () => {
     const result = runTactic(state, "goal-1", "try");
 
     expect(result.goal.status).toBe("proved");
-    expect(result.step.message).toBe("try closed the goal");
+    expect(result.step.message).toBe(
+      "try closed the goal using adj.counitNaturality.f, adj.triangle.left.tail.X.f"
+    );
     expect(result.state.proofLog).toHaveLength(1);
   });
 
@@ -60,5 +64,34 @@ describe("tactics", () => {
     const result = runTactic(state, "goal-1", "normalize");
 
     expect(result.goal.status).toBe("proved");
+  });
+
+  it("does not run tactics on an already proved goal", () => {
+    const equation = typecheckEquation(ctx, comp(id(functorObject(F, X)), f), f);
+    const state = createProofState(ctx, [createGoal("goal-1", equation)]);
+    const proved = runTactic(state, "goal-1", "normalize");
+
+    expect(() => runTactic(proved.state, "goal-1", "try")).toThrow("Goal is already proved: goal-1");
+    expect(proved.state.proofLog).toHaveLength(1);
+  });
+
+  it("tries naturality rules without requiring an explicit naturality tactic", () => {
+    const naturalityContext = parseContext(`
+category C
+category D
+functor F : C -> D
+functor G : C -> D
+nattrans alpha : F => G
+object X : C
+object Y : C
+morphism f : X -> Y
+`);
+    const equation = parseEquation("F.map(f) >> alpha_Y = alpha_X >> G.map(f)", naturalityContext);
+    const state = createProofState(naturalityContext, [createGoal("goal-1", equation)]);
+
+    const result = runTactic(state, "goal-1", "try");
+
+    expect(result.goal.status).toBe("proved");
+    expect(result.step.message).toBe("try closed the goal using alpha.naturality.f");
   });
 });

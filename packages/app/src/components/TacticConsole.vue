@@ -9,6 +9,7 @@ defineProps<{
   targetStatus: string;
   targetEquation: string;
   targetEquationLatex: string;
+  canRun: boolean;
 }>();
 
 defineEmits<{
@@ -24,7 +25,7 @@ defineEmits<{
         <h2>Tactic</h2>
         <p class="target-line">{{ targetTitle }} / {{ targetStatus }}</p>
       </div>
-      <button type="button" @click="$emit('run')">Prove</button>
+      <button type="button" :disabled="!canRun" @click="$emit('run')">Prove</button>
     </div>
     <div v-if="targetEquation" class="target-equation">
       <MathText :latex="targetEquationLatex" :fallback="targetEquation" />
@@ -45,7 +46,7 @@ defineEmits<{
       :value="modelValue"
       spellcheck="false"
       @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
-      @keydown.enter="$emit('run')"
+      @keydown.enter="canRun && $emit('run')"
     />
   </section>
 </template>

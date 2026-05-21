@@ -319,6 +319,9 @@ export function proveDiagramSubgoal(
   if (!subgoal) {
     throw new Error(`Unknown diagram subgoal: ${subgoalId}`);
   }
+  if (subgoal.status === "proved") {
+    throw new Error(`Diagram subgoal is already proved: ${subgoalId}`);
+  }
 
   const proofState = createProofState(ctx, [createGoal(subgoal.id, subgoal.equation)]);
   const result = runTactic(proofState, subgoal.id, tactic, rules);

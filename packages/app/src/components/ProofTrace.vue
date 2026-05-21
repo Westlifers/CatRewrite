@@ -4,13 +4,14 @@ import MathText from "./MathText.vue";
 
 defineProps<{
   steps: ProofStep[];
+  title: string;
 }>();
 </script>
 
 <template>
   <section class="panel trace-panel">
     <div class="panel-header">
-      <h2>Trace</h2>
+      <h2>Trace: {{ title }}</h2>
       <span>{{ steps.length }}</span>
     </div>
     <ol v-if="steps.length">

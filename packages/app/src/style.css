@@ -343,12 +343,15 @@ li {
   background: #fbfcfb;
 }
 
-li strong,
-li span {
+li > strong,
+li > span,
+li > .subgoal-header > strong,
+li > .subgoal-header > span {
   display: block;
 }
 
-li span,
+li > span,
+li > .subgoal-header > span,
 .trace-panel p,
 .rule-panel p,
 .explainer-panel p {
@@ -441,6 +444,52 @@ li span,
   stroke-linejoin: round;
   font: 11px "SFMono-Regular", Consolas, monospace;
   pointer-events: none;
+}
+
+.diagram-label-fo {
+  overflow: visible;
+  pointer-events: none;
+}
+
+.diagram-math-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  height: 100%;
+  color: #2f3d34;
+  font-size: 11px;
+  line-height: 1;
+  overflow: visible;
+  text-align: center;
+  box-sizing: border-box;
+  text-shadow:
+    0 1px 0 #fbfcfb,
+    1px 0 0 #fbfcfb,
+    0 -1px 0 #fbfcfb,
+    -1px 0 0 #fbfcfb;
+}
+
+.diagram-math-label .math-text {
+  width: auto;
+  max-width: none;
+  overflow: visible;
+}
+
+.diagram-math-label .katex {
+  font-size: 1em;
+  line-height: 1;
+}
+
+.diagram-label-id {
+  flex: 0 0 auto;
+  color: #637068;
+  font: 10px "SFMono-Regular", Consolas, monospace;
+}
+
+.arrow-math-label {
+  justify-content: center;
 }
 
 .diagram-arrow:hover .arrow-visible {
@@ -556,8 +605,19 @@ li span,
   pointer-events: none;
 }
 
+.node-math-label {
+  color: #182029;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .diagram-node.auxiliary text {
   fill: #2456a6;
+  font-weight: 700;
+}
+
+.diagram-node.auxiliary .node-math-label {
+  color: #2456a6;
   font-weight: 700;
 }
 
@@ -744,19 +804,24 @@ li span,
 }
 
 .region-list {
+  display: grid;
   gap: 8px;
   max-height: 220px;
   overflow: auto;
 }
 
-.region-list li {
+.region-list article {
   display: grid;
   gap: 6px;
   min-width: 0;
+  padding: 10px;
+  border: 1px solid #e4e8e3;
+  border-radius: 6px;
+  background: #fbfcfb;
   cursor: pointer;
 }
 
-.region-list li.active {
+.region-list article.active {
   border-color: #6385c2;
   background: #f0f4fb;
 }
@@ -765,6 +830,43 @@ li span,
   color: #68746b;
   font-size: 0.82rem;
   text-align: right;
+}
+
+.region-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.region-badge {
+  width: max-content;
+  padding: 3px 7px;
+  border: 1px solid #d7ded8;
+  border-radius: 999px;
+  color: #59675e;
+  background: #f7f9f7;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.region-badge.subgoal {
+  border-color: #9ec9ac;
+  color: #17633d;
+  background: #eef9f1;
+}
+
+.region-badge.available {
+  border-color: #c7d0df;
+  color: #2456a6;
+  background: #f0f4fb;
+}
+
+.region-badge.outer {
+  border-color: #d8bf72;
+  color: #74520f;
+  background: #fff9df;
 }
 
 .region-equation {
@@ -911,6 +1013,11 @@ li span,
   cursor: pointer;
 }
 
+.subgoal-list li.main-proof-target {
+  border-color: #d5ded5;
+  background: #fbfcfb;
+}
+
 .subgoal-list li.active {
   border-color: #739a7f;
   background: #f0f7f1;
@@ -926,6 +1033,13 @@ li span,
 .subgoal-list button {
   justify-self: start;
   padding: 0 12px;
+}
+
+.proof-summary {
+  margin: 0;
+  color: #68746b;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .target-line {

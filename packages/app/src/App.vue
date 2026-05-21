@@ -84,6 +84,10 @@ onBeforeUnmount(() => {
           @elaborate="proof.elaborate"
         />
         <SubgoalPanel
+          :main-equation="proof.currentEquation"
+          :main-equation-latex="proof.currentEquationLatex"
+          :main-status="proof.goalStatus"
+          :main-proof-steps="proof.activeGoal?.proofSteps ?? []"
           :subgoals="proof.diagramSubgoals"
           :selected-subgoal-id="proof.selectedSubgoalId"
           :can-complete-by-subgoals="proof.canCompleteBySubgoals"
@@ -98,9 +102,10 @@ onBeforeUnmount(() => {
           :target-status="proof.activeProofStatus"
           :target-equation="proof.activeProofEquation"
           :target-equation-latex="proof.activeProofEquationLatex"
+          :can-run="proof.canRunTactic"
           @run="proof.runCurrentTactic"
         />
-        <ProofTrace :steps="proof.activeProofSteps" />
+        <ProofTrace :title="proof.activeProofTargetTitle" :steps="proof.activeProofSteps" />
         <GoalInspector
           :hom-type="proof.homType"
           :hom-type-latex="proof.homTypeLatex"
@@ -118,6 +123,7 @@ onBeforeUnmount(() => {
           :right-path="proof.rightPath"
           v-model:is-auxiliary-mode="proof.isAuxiliaryMode"
           :diagram="proof.diagram"
+          :regions="proof.diagramRegions"
           :auxiliary-from="proof.auxiliaryFrom"
           :auxiliary-to="proof.auxiliaryTo"
           :proved-region-ids="proof.provedRegionIds"
@@ -138,8 +144,10 @@ onBeforeUnmount(() => {
           :selected-region-id="proof.selectedDiagramRegionId"
           :has-diagram="!!proof.diagram"
           :can-split-goal="proof.canSplitGoal"
+          :can-add-all-region-subgoals="proof.canAddAllRegionSubgoals"
           @select-region="proof.selectDiagramRegion"
           @add-region-subgoal="proof.addSelectedRegionSubgoal"
+          @add-all-region-subgoals="proof.addAllRegionSubgoals"
           @split-goal="proof.splitCurrentDiagramGoal"
           @add-subgoal="proof.addDiagramSubgoal"
           @clear-path="proof.clearPath"

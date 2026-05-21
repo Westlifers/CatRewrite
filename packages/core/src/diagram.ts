@@ -162,11 +162,26 @@ function removeArrows(diagram: Diagram, arrowIds: Set<string>): Diagram {
 }
 
 function nextAuxiliaryNodePosition(diagram: Diagram): { x: number; y: number } {
-  const auxiliaryIndex = diagram.nodes.filter((node) => /^aux-node(?:-|$)/.test(node.id)).length;
-  return {
-    x: 135 + (auxiliaryIndex % 3) * 100,
-    y: 155 + Math.floor(auxiliaryIndex / 3) * 52
-  };
+  const candidates = [
+    { x: 235, y: 155 },
+    { x: 235, y: 78 },
+    { x: 235, y: 232 },
+    { x: 135, y: 155 },
+    { x: 335, y: 155 },
+    { x: 135, y: 78 },
+    { x: 335, y: 78 },
+    { x: 135, y: 232 },
+    { x: 335, y: 232 },
+    { x: 235, y: 40 },
+    { x: 235, y: 270 }
+  ];
+
+  return candidates
+    .map((candidate) => ({
+      candidate,
+      distance: Math.min(...diagram.nodes.map((node) => Math.hypot(node.position.x - candidate.x, node.position.y - candidate.y)))
+    }))
+    .sort((first, second) => second.distance - first.distance)[0]?.candidate ?? { x: 235, y: 155 };
 }
 
 export function pathTerm(ctx: Context, diagram: Diagram, path: string[]): Term {

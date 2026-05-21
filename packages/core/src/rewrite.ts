@@ -162,9 +162,10 @@ export function simplify(
   _ctx: Context,
   term: Term,
   rules: RewriteRule[],
-  options: { maxSteps?: number } = {}
+  options: { maxSteps?: number; tags?: RuleTag[] } = {}
 ): SimplifyResult {
-  const simpRules = rules.filter((rule) => rule.tags.includes("simp"));
+  const tags = options.tags ?? ["simp"];
+  const simpRules = rules.filter((rule) => tags.some((tag) => rule.tags.includes(tag)));
   const maxSteps = options.maxSteps ?? 100;
   const seen = new Set<string>();
   const steps: RewriteResult[] = [];

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import type { Diagram } from "@catrewrite/core";
+import { latexObject, latexTerm, type Diagram, type DiagramRegion } from "@catrewrite/core";
 import { computed } from "vue";
 import { ref } from "vue";
+import MathText from "./MathText.vue";
 
 const props = defineProps<{
   diagram?: Diagram;
+  regions?: DiagramRegion[];
   isPathSelectionMode: boolean;
   leftPath: string[];
   rightPath: string[];
@@ -38,8 +40,9 @@ const zoomTransform = computed(
 const inverseZoom = computed(() => 1 / zoom.value);
 
 const nodeMap = computed(() => new Map((props.diagram?.nodes ?? []).map((node) => [node.id, node])));
+const visibleRegions = computed(() => props.regions ?? props.diagram?.regions ?? []);
 const selectedRegion = computed(() =>
-  (props.diagram?.regions ?? []).find((region) => region.id === props.selectedRegionId)
+  visibleRegions.value.find((region) => region.id === props.selectedRegionId)
 );
 const selectedRegionArrowIds = computed(() => new Set([...(selectedRegion.value?.leftPath ?? []), ...(selectedRegion.value?.rightPath ?? [])]));
 
@@ -72,6 +75,11 @@ const renderedArrows = computed(() =>
           : undefined
       : undefined;
     const selectedRegionMember = selectedRegionArrowIds.value.has(arrow.id);
+    const midpoint = {
+      x: (start.x + end.x) / 2,
+      y: (start.y + end.y) / 2
+    };
+    const labelOffset = labelOffsetForArrow(ux, uy, midpoint);
 
     return [
       {
@@ -79,8 +87,8 @@ const renderedArrows = computed(() =>
         start,
         end,
         labelPosition: {
-          x: (start.x + end.x) / 2,
-          y: (start.y + end.y) / 2 - 10
+          x: clamp(midpoint.x + labelOffset.x, 72, 398),
+          y: clamp(midpoint.y + labelOffset.y, 24, 286)
         },
         selectedSide,
         selectedRegionMember
@@ -90,7 +98,7 @@ const renderedArrows = computed(() =>
 );
 
 const renderedRegions = computed(() =>
-  (props.diagram?.regions ?? []).flatMap((region) => {
+  visibleRegions.value.flatMap((region) => {
     const isProved = props.provedRegionIds.includes(region.id);
     const isSelected = props.selectedRegionId === region.id;
     if (!isProved && !isSelected) {
@@ -180,6 +188,33 @@ function expandPoint(
     x: point.x + (dx / length) * amount,
     y: point.y + (dy / length) * amount
   };
+}
+
+function labelOffsetForArrow(
+  ux: number,
+  uy: number,
+  midpoint: { x: number; y: number }
+): { x: number; y: number } {
+  const normal = { x: -uy, y: ux };
+  const amount = 15;
+
+  if (Math.abs(uy) < 0.25) {
+    return { x: 0, y: midpoint.y < canvasCenter.y ? -amount : amount };
+  }
+
+  if (Math.abs(ux) < 0.25) {
+    return { x: midpoint.x < canvasCenter.x ? -amount : amount, y: 0 };
+  }
+
+  const direction = normal.y < 0 ? 1 : -1;
+  return {
+    x: normal.x * amount * direction,
+    y: normal.y * amount * direction
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function beginPan(event: MouseEvent): void {
@@ -321,12 +356,19 @@ function deleteContextMenuTarget(): void {
               :x2="arrow.end.x"
               :y2="arrow.end.y"
             />
-            <text
+            <foreignObject
+              class="diagram-label-fo"
               :transform="`translate(${arrow.labelPosition.x} ${arrow.labelPosition.y}) scale(${inverseZoom})`"
-              text-anchor="middle"
+              x="-52"
+              y="-12"
+              width="104"
+              height="24"
             >
-              {{ arrow.id }}: {{ arrow.label }}
-            </text>
+              <div class="diagram-math-label arrow-math-label">
+                <span class="diagram-label-id">{{ arrow.id }}</span>
+                <MathText :latex="latexTerm(arrow.term)" :fallback="arrow.label" />
+              </div>
+            </foreignObject>
           </g>
 
           <g
@@ -347,12 +389,18 @@ function deleteContextMenuTarget(): void {
           >
             <circle class="node-hitbox" :cx="node.position.x" :cy="node.position.y" r="28" />
             <circle class="node-focus" :cx="node.position.x" :cy="node.position.y" r="23" />
-            <text
+            <foreignObject
+              class="diagram-label-fo"
               :transform="`translate(${node.position.x} ${node.position.y + 5}) scale(${inverseZoom})`"
-              text-anchor="middle"
+              x="-38"
+              y="-13"
+              width="76"
+              height="26"
             >
-              {{ node.label }}
-            </text>
+              <div class="diagram-math-label node-math-label">
+                <MathText :latex="latexObject(node.object)" :fallback="node.label" />
+              </div>
+            </foreignObject>
           </g>
         </g>
       </svg>

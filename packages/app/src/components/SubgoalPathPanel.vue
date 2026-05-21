@@ -12,6 +12,7 @@ defineProps<{
   selectedRegionId?: string;
   hasDiagram: boolean;
   canSplitGoal: boolean;
+  canAddAllRegionSubgoals: boolean;
 }>();
 
 defineEmits<{
@@ -19,6 +20,7 @@ defineEmits<{
   "update:isPathSelectionMode": [value: boolean];
   selectRegion: [regionId?: string];
   addRegionSubgoal: [];
+  addAllRegionSubgoals: [];
   splitGoal: [];
   addSubgoal: [];
   clearPath: [side: "left" | "right"];
@@ -41,19 +43,28 @@ const showManualPaths = ref(false);
         <button type="button" :disabled="!selectedRegionId" @click="$emit('addRegionSubgoal')">
           Add Subgoal
         </button>
+        <button type="button" :disabled="!canAddAllRegionSubgoals" @click="$emit('addAllRegionSubgoals')">
+          Add All
+        </button>
       </div>
     </div>
 
-    <ol v-if="regions.length" class="region-list">
-      <li
+    <div v-if="regions.length" class="region-list" role="list">
+      <article
         v-for="region in regions"
         :key="region.id"
+        role="listitem"
         :class="{ active: selectedRegionId === region.id }"
         @click="$emit('selectRegion', selectedRegionId === region.id ? undefined : region.id)"
       >
         <div class="subgoal-header">
           <strong>{{ region.id }}</strong>
           <span>{{ region.label ?? "region" }}</span>
+        </div>
+        <div class="region-badges">
+          <span v-if="region.isOuterGoal" class="region-badge outer">outer</span>
+          <span v-else-if="region.isSubgoal" class="region-badge subgoal">subgoal</span>
+          <span v-else class="region-badge available">available</span>
         </div>
         <div v-if="region.equationText" class="region-equation">
           <MathText :latex="region.equationLatex" :fallback="region.equationText" />
@@ -63,8 +74,8 @@ const showManualPaths = ref(false);
           <code>{{ region.leftPath.join(" >> ") }}</code>
           <code>{{ region.rightPath.join(" >> ") }}</code>
         </div>
-      </li>
-    </ol>
+      </article>
+    </div>
     <p v-else class="muted">No selectable regions.</p>
 
     <div class="manual-paths">

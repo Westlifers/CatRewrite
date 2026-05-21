@@ -133,7 +133,7 @@ describe("diagram paths", () => {
     expect(withNode.nodes.at(-1)).toMatchObject({
       id: "aux-node",
       label: "G Y",
-      position: { x: 135, y: 155 },
+      position: { x: 235, y: 155 },
       status: "auxiliary"
     });
     expect(() =>
@@ -221,8 +221,12 @@ describe("diagram paths", () => {
     const proved = proveDiagramSubgoal(ctx, proofState, "subgoal-1", "try");
 
     expect(proved.subgoals[0].status).toBe("proved");
-    expect(proved.subgoals[0].proofSteps[0].message).toBe("try closed the goal");
+    expect(proved.subgoals[0].proofSteps[0].message).toContain("try closed the goal using");
     expect(proved.provedRegionIds).toEqual(["subgoal-1-region"]);
+    expect(() => proveDiagramSubgoal(ctx, proved, "subgoal-1", "try")).toThrow(
+      "Diagram subgoal is already proved: subgoal-1"
+    );
+    expect(proved.subgoals[0].proofSteps).toHaveLength(1);
   });
 
   it("turns proved diagram subgoals into local simplification rules", () => {
@@ -287,11 +291,51 @@ describe("diagram paths", () => {
     expect(outerResult.goal.status).toBe("proved");
     expect(outerResult.step.tactic).toBe("pasting");
     expect(outerResult.step.message).toBe("completed by pasting alpha-square and beta-square");
+    expect(outerResult.proofState.proofLog.at(-1)).toMatchObject({
+      tactic: "pasting",
+      message: "completed by pasting alpha-square and beta-square"
+    });
+    expect(outerResult.proofState.goals[0].proofSteps.at(-1)).toMatchObject({
+      tactic: "pasting",
+      message: "completed by pasting alpha-square and beta-square"
+    });
     expect(outerResult.diagramProofState.provedRegionIds).toEqual([
       "alpha-square-region",
       "beta-square-region",
       "goal"
     ]);
+  });
+
+  it("refuses to complete a diagram goal while a subgoal is still open", () => {
+    const ctx = parseContext(verticalCompositeContext);
+    const outerEquation = parseEquation("F.map(f) >> alpha_Y >> beta_Y = alpha_X >> beta_X >> H.map(f)", ctx);
+    const diagram = addAuxiliaryArrow(ctx, equationDiagram(ctx, outerEquation), {
+      id: "g-mid",
+      from: "rhs-node-1",
+      to: "lhs-node-2",
+      label: "G.map(f)",
+      term: parseTerm("G.map(f)", ctx)
+    });
+    const withAlpha = createSubgoalFromPaths(ctx, createDiagramProofState(diagram), {
+      id: "alpha-square",
+      leftPath: ["lhs-1", "lhs-2"],
+      rightPath: ["rhs-1", "g-mid"]
+    });
+    const withBeta = createSubgoalFromPaths(ctx, withAlpha, {
+      id: "beta-square",
+      leftPath: ["g-mid", "lhs-3"],
+      rightPath: ["rhs-2", "rhs-3"]
+    });
+    const provedAlpha = proveDiagramSubgoal(ctx, withBeta, "alpha-square", "naturality alpha at f");
+
+    expect(() =>
+      completeDiagramGoalBySubgoals(
+        ctx,
+        provedAlpha,
+        createProofState(ctx, [createGoal("outer-goal", outerEquation)]),
+        "outer-goal"
+      )
+    ).toThrow("Cannot paste with open subgoals: beta-square");
   });
 
   it("initializes the vertical composite example from only the outer goal", () => {

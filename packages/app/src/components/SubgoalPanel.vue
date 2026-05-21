@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { latexEquation, prettyEquation, type DiagramSubgoal } from "@catrewrite/core";
+import { latexEquation, prettyEquation, type DiagramSubgoal, type ProofStep } from "@catrewrite/core";
 import { computed } from "vue";
 import MathText from "./MathText.vue";
 
 const props = defineProps<{
+  mainEquation: string;
+  mainEquationLatex: string;
+  mainStatus: string;
+  mainProofSteps: ProofStep[];
   subgoals: DiagramSubgoal[];
   selectedSubgoalId?: string;
   canCompleteBySubgoals: boolean;
@@ -16,6 +20,11 @@ defineEmits<{
 }>();
 
 const provedCount = computed(() => props.subgoals.filter((subgoal) => subgoal.status === "proved").length);
+
+function proofSummary(steps: ProofStep[]): string {
+  const step = steps.at(-1);
+  return step ? step.message : "No proof step yet";
+}
 </script>
 
 <template>
@@ -28,16 +37,23 @@ const provedCount = computed(() => props.subgoals.filter((subgoal) => subgoal.st
         </p>
       </div>
       <div class="button-row">
-        <button type="button" :class="{ active: !selectedSubgoalId }" @click="$emit('selectTarget', undefined)">
-          Main Goal
-        </button>
         <button type="button" :disabled="!canCompleteBySubgoals" @click="$emit('completeGoal')">
           Complete Goal
         </button>
       </div>
     </div>
 
-    <ol v-if="subgoals.length" class="subgoal-list">
+    <ol class="subgoal-list">
+      <li class="main-proof-target" :class="{ active: !selectedSubgoalId }" @click="$emit('selectTarget', undefined)">
+        <div class="subgoal-header">
+          <strong>Main Goal</strong>
+          <span :data-status="mainStatus">{{ mainStatus }}</span>
+        </div>
+        <div class="math-block">
+          <MathText :latex="mainEquationLatex" :fallback="mainEquation" />
+        </div>
+        <p class="proof-summary">{{ proofSummary(mainProofSteps) }}</p>
+      </li>
       <li
         v-for="subgoal in subgoals"
         :key="subgoal.id"
@@ -51,11 +67,11 @@ const provedCount = computed(() => props.subgoals.filter((subgoal) => subgoal.st
         <div class="math-block">
           <MathText :latex="latexEquation(subgoal.equation)" :fallback="prettyEquation(subgoal.equation)" />
         </div>
+        <p class="proof-summary">{{ proofSummary(subgoal.proofSteps) }}</p>
         <button type="button" :disabled="subgoal.status === 'proved'" @click.stop="$emit('proveSubgoal', subgoal.id)">
           Prove
         </button>
       </li>
     </ol>
-    <p v-else class="muted">No subgoals.</p>
   </section>
 </template>
