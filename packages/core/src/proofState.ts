@@ -5,6 +5,16 @@ export interface Goal {
   equation: Equation;
   status: "open" | "proved" | "failed";
   proofSteps: ProofStep[];
+  parentGoalId?: string;
+  completion?: GoalCompletion;
+}
+
+export type GoalCompletion = ProductExtCompletion;
+
+export interface ProductExtCompletion {
+  kind: "productExt";
+  productName: string;
+  side: "left" | "right";
 }
 
 export interface ProofStep {

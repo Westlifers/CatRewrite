@@ -1,14 +1,21 @@
 <script setup lang="ts">
-import { latexEquation, prettyEquation, type DiagramSubgoal, type ProofStep } from "@catrewrite/core";
+import { latexEquation, prettyEquation, type Equation, type ProofStep } from "@catrewrite/core";
 import { computed } from "vue";
 import MathText from "./MathText.vue";
+
+export interface ProofSubgoalView {
+  id: string;
+  equation: Equation;
+  status: "open" | "proved" | "failed";
+  proofSteps: ProofStep[];
+}
 
 const props = defineProps<{
   mainEquation: string;
   mainEquationLatex: string;
   mainStatus: string;
   mainProofSteps: ProofStep[];
-  subgoals: DiagramSubgoal[];
+  subgoals: ProofSubgoalView[];
   selectedSubgoalId?: string;
   canCompleteBySubgoals: boolean;
 }>();

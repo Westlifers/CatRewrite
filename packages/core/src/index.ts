@@ -5,6 +5,7 @@ export * from "./normalize";
 export * from "./rewrite";
 export * from "./adjunction";
 export * from "./natTrans";
+export * from "./product";
 export * from "./proofState";
 export * from "./tactics";
 export * from "./parser";

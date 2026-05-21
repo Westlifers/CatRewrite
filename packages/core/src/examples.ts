@@ -43,6 +43,19 @@ object Y : C
 
 morphism f : X -> Y`;
 
+const productContext = `category C
+
+object W : C
+object X : C
+object A : C
+object B : C
+
+product P of A B
+
+morphism h : W -> X
+morphism f : X -> A
+morphism g : X -> B`;
+
 export const proofExamples: ProofExample[] = [
   {
     id: "vertical-composite-naturality",
@@ -64,6 +77,17 @@ export const proofExamples: ProofExample[] = [
     contextText: adjunctionContext,
     goalText: "F.map(eta(adj, X) >> G.map(f)) >> eps(adj, Y) = f",
     tacticText: "try"
+  },
+  {
+    id: "product-pairing-precompose",
+    title: "Pairing after precomposition",
+    summary: "Proves that precomposing a pairing is the pairing of the precomposed maps.",
+    explanation:
+      "The product_ext P tactic proves equality of maps into the chosen product P by composing both sides with pi1(P) and pi2(P). Each projected goal then simplifies using the product projection rules, reducing both projections to h >> f and h >> g respectively.",
+    contextText: productContext,
+    goalText: "h >> <f, g> = <h >> f, h >> g>",
+    tacticText: "product_ext P",
+    provesWithTactic: false
   },
   {
     id: "left-triangle",

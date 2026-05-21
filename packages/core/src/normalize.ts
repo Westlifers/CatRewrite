@@ -9,7 +9,16 @@ export function normalizeTerm(ctx: Context, term: Term): Term {
     case "unit":
     case "counit":
     case "component":
+    case "productProjection":
       return term;
+
+    case "productPair":
+      return {
+        kind: "productPair",
+        product: term.product,
+        left: normalizeTerm(ctx, term.left),
+        right: normalizeTerm(ctx, term.right)
+      };
 
     case "map": {
       const inner = normalizeTerm(ctx, term.term);

@@ -20,12 +20,19 @@ export function prettyTerm(term: Term): string {
       return `eps(${term.adjunction.name}, ${prettyObject(term.object)})`;
     case "component":
       return `${term.natTrans.name}_${prettyObject(term.object)}`;
+    case "productProjection":
+      return term.side === "left" ? `pi1(${term.product.name})` : `pi2(${term.product.name})`;
+    case "productPair":
+      return `<${prettyTerm(term.left)}, ${prettyTerm(term.right)}>_${term.product.name}`;
   }
 }
 
 export function prettyObject(object: ObjectExpr): string {
   switch (object.kind) {
     case "object":
+      if (object.productFactors) {
+        return `${parenthesizeProductObject(object.productFactors.left)} x ${parenthesizeProductObject(object.productFactors.right)}`;
+      }
       return object.name;
     case "functorObject":
       return `${object.functor.name} ${prettyObject(object.object)}`;
@@ -56,12 +63,21 @@ export function latexTerm(term: Term): string {
       return `\\varepsilon^{${latexName(term.adjunction.name)}}_{${latexObject(term.object)}}`;
     case "component":
       return `${latexName(term.natTrans.name)}_{${latexObject(term.object)}}`;
+    case "productProjection":
+      return term.side === "left"
+        ? `\\pi^{${latexObject(term.product)}}_{1}`
+        : `\\pi^{${latexObject(term.product)}}_{2}`;
+    case "productPair":
+      return `\\left\\langle ${latexTerm(term.left)}, ${latexTerm(term.right)} \\right\\rangle_{${latexObject(term.product)}}`;
   }
 }
 
 export function latexObject(object: ObjectExpr): string {
   switch (object.kind) {
     case "object":
+      if (object.productFactors) {
+        return `${parenthesizeLatexProductObject(object.productFactors.left)} \\times ${parenthesizeLatexProductObject(object.productFactors.right)}`;
+      }
       return latexName(object.name);
     case "functorObject":
       return `${latexName(object.functor.name)}(${latexObject(object.object)})`;
@@ -78,6 +94,16 @@ function parenthesizeComp(term: Term): string {
 
 function parenthesizeLatexComp(term: Term): string {
   return term.kind === "comp" ? `\\left(${latexTerm(term)}\\right)` : latexTerm(term);
+}
+
+function parenthesizeProductObject(object: ObjectExpr): string {
+  return object.kind === "object" && object.productFactors ? `(${prettyObject(object)})` : prettyObject(object);
+}
+
+function parenthesizeLatexProductObject(object: ObjectExpr): string {
+  return object.kind === "object" && object.productFactors
+    ? `\\left(${latexObject(object)}\\right)`
+    : latexObject(object);
 }
 
 function latexName(name: string): string {

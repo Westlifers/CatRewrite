@@ -2,6 +2,7 @@ import { adjunctionSimpRules } from "./adjunction";
 import { equalTerm } from "./equality";
 import { natTransNaturalityRules } from "./natTrans";
 import { normalizeTerm } from "./normalize";
+import { productProjectionRules } from "./product";
 import { applyRewriteOnce, type RewriteRule } from "./rewrite";
 import {
   type AdjunctionDecl,
@@ -9,6 +10,7 @@ import {
   type Equation,
   type HomType,
   type NatTransDecl,
+  type ProductDecl,
   type Term
 } from "./syntax";
 import { inferTerm, typecheckEquation } from "./typecheck";
@@ -40,8 +42,11 @@ export function generatedRules(ctx: Context, extraRules: RewriteRule[] = []): Re
   const natTransRules = ctx.decls
     .filter((decl): decl is NatTransDecl => decl.kind === "natTransDecl")
     .flatMap((decl) => natTransNaturalityRules(ctx, decl.natTrans));
+  const productRules = ctx.decls
+    .filter((decl): decl is ProductDecl => decl.kind === "productDecl")
+    .flatMap((decl) => productProjectionRules(decl));
 
-  return [...adjunctionRules, ...natTransRules, ...extraRules];
+  return [...adjunctionRules, ...natTransRules, ...productRules, ...extraRules];
 }
 
 export function inspectEquation(ctx: Context, equation: Equation, rules: RewriteRule[] = []): GoalInspection {

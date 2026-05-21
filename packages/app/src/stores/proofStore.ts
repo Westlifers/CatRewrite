@@ -1,5 +1,6 @@
 import {
   createGoal,
+  completeGoalByProductExt,
   completeDiagramGoalBySubgoals as completeDiagramGoalBySubgoalsCore,
   createDiagramProofState,
   createProofState,
@@ -26,6 +27,7 @@ import {
   removeAuxiliaryNode,
   runTactic,
   splitDiagramGoal,
+  splitDiagramGoalByProductExt,
   splittableRegions,
   type Diagram,
   type DiagramArrow,
@@ -79,13 +81,18 @@ export const useProofStore = defineStore("proof", () => {
   const selectedSubgoalId = ref<string>();
   const selectedDiagramRegionId = ref<string>();
 
-  const activeGoal = computed(() => proofState.value?.goals.find((goal) => goal.id === proofState.value?.activeGoalId));
-  const selectedSubgoal = computed(() =>
+  const activeGoal = computed(() => proofState.value?.goals.find((goal) => !goal.parentGoalId));
+  const selectedProofSubgoal = computed(() =>
+    proofState.value?.goals.find((goal) => goal.parentGoalId && goal.id === selectedSubgoalId.value)
+  );
+  const selectedDiagramSubgoal = computed(() =>
     diagramProofState.value?.subgoals.find((subgoal) => subgoal.id === selectedSubgoalId.value)
   );
-  const activeProofTarget = computed(() => selectedSubgoal.value ?? activeGoal.value);
+  const activeProofTarget = computed(() => selectedProofSubgoal.value ?? selectedDiagramSubgoal.value ?? activeGoal.value);
   const activeProofTargetTitle = computed(() =>
-    selectedSubgoal.value ? `Subgoal ${selectedSubgoal.value.id}` : "Main goal"
+    selectedProofSubgoal.value || selectedDiagramSubgoal.value
+      ? `Subgoal ${(selectedProofSubgoal.value ?? selectedDiagramSubgoal.value)?.id}`
+      : "Main goal"
   );
   const goalStatus = computed(() => activeGoal.value?.status ?? "open");
   const currentEquation = computed(() => (activeGoal.value ? prettyEquation(activeGoal.value.equation) : ""));
@@ -158,7 +165,9 @@ export const useProofStore = defineStore("proof", () => {
       return undefined;
     }
   });
+  const proofSubgoals = computed(() => proofState.value?.goals.filter((goal) => goal.parentGoalId) ?? []);
   const diagramSubgoals = computed(() => diagramProofState.value?.subgoals ?? []);
+  const proofPanelSubgoals = computed(() => [...proofSubgoals.value, ...diagramSubgoals.value]);
   const diagramRegions = computed<DiagramRegionView[]>(() => {
     const currentDiagram = diagram.value;
     if (!currentDiagram) {
@@ -187,12 +196,18 @@ export const useProofStore = defineStore("proof", () => {
     (diagram.value?.arrows ?? []).filter((arrow) => arrow.status === "auxiliary")
   );
   const provedRegionIds = computed(() => diagramProofState.value?.provedRegionIds ?? []);
-  const selectedRegionId = computed(() => selectedSubgoal.value?.regionId ?? selectedDiagramRegionId.value);
-  const canCompleteBySubgoals = computed(() =>
+  const selectedRegionId = computed(() => selectedDiagramSubgoal.value?.regionId ?? selectedDiagramRegionId.value);
+  const canCompleteByProductExt = computed(() =>
+    activeGoal.value?.status === "open" &&
+    proofSubgoals.value.some((subgoal) => subgoal.completion?.kind === "productExt") &&
+    proofSubgoals.value.every((subgoal) => subgoal.status === "proved")
+  );
+  const canCompleteByDiagramSubgoals = computed(() =>
     activeGoal.value?.status === "open" &&
     diagramSubgoals.value.length > 0 &&
     diagramSubgoals.value.every((subgoal) => subgoal.status === "proved")
   );
+  const canCompleteBySubgoals = computed(() => canCompleteByProductExt.value || canCompleteByDiagramSubgoals.value);
   const canSplitGoal = computed(() => (diagramProofState.value ? splittableRegions(diagramProofState.value).length > 0 : false));
   const canAddAllRegionSubgoals = computed(() =>
     diagramRegions.value.some((region) => !region.isOuterGoal && !region.isSubgoal)
@@ -218,7 +233,7 @@ export const useProofStore = defineStore("proof", () => {
   }
 
   function runCurrentTactic(): void {
-    if (isDirty.value || !proofState.value || (!activeGoal.value && !selectedSubgoal.value)) {
+    if (isDirty.value || !proofState.value || (!activeGoal.value && !selectedProofSubgoal.value && !selectedDiagramSubgoal.value)) {
       elaborate();
     }
 
@@ -232,10 +247,35 @@ export const useProofStore = defineStore("proof", () => {
         return;
       }
 
-      if (selectedSubgoal.value) {
-        proveSubgoal(selectedSubgoal.value.id);
+      if (selectedProofSubgoal.value) {
+        proofState.value = runTactic(proofState.value, selectedProofSubgoal.value.id, tacticText.value, localDiagramRules.value).state;
+        selectedSubgoalId.value =
+          proofState.value.goals.find((goal) => goal.parentGoalId && goal.status !== "proved")?.id ?? selectedProofSubgoal.value.id;
+      } else if (selectedDiagramSubgoal.value) {
+        proveSubgoal(selectedDiagramSubgoal.value.id);
       } else if (activeGoal.value) {
-        proofState.value = runTactic(proofState.value, activeGoal.value.id, tacticText.value, localDiagramRules.value).state;
+        const productExtMatch = /^product_ext\s+([A-Za-z][A-Za-z0-9_]*)$/.exec(tacticText.value.trim());
+        if (productExtMatch) {
+          const context = parseContext(contextText.value);
+          const currentDiagram = diagram.value ?? baseDiagram(context, activeGoal.value.equation);
+          const currentDiagramProofState = diagramProofState.value ?? createDiagramProofState(currentDiagram);
+          diagramProofState.value = splitDiagramGoalByProductExt(
+            context,
+            currentDiagramProofState,
+            productExtMatch[1],
+            activeGoal.value.id
+          );
+          auxiliaryDiagram.value = diagramProofState.value.diagram;
+          selectedSubgoalId.value = diagramProofState.value.subgoals[0]?.id;
+          error.value = undefined;
+          return;
+        }
+        const result = runTactic(proofState.value, activeGoal.value.id, tacticText.value, localDiagramRules.value);
+        proofState.value = result.state;
+        const activeProofSubgoal = proofState.value.goals.find(
+          (goal) => goal.parentGoalId && goal.id === proofState.value?.activeGoalId
+        );
+        selectedSubgoalId.value = activeProofSubgoal?.id;
       }
       error.value = undefined;
     } catch (caught) {
@@ -384,6 +424,23 @@ export const useProofStore = defineStore("proof", () => {
   }
 
   function proveSubgoal(subgoalId: string): void {
+    const proofSubgoal = proofState.value?.goals.find((goal) => goal.parentGoalId && goal.id === subgoalId);
+    if (proofSubgoal && proofState.value) {
+      try {
+        if (proofSubgoal.status === "proved") {
+          reportError("The selected subgoal is already proved.");
+          return;
+        }
+        proofState.value = runTactic(proofState.value, subgoalId, tacticText.value, localDiagramRules.value).state;
+        selectedSubgoalId.value =
+          proofState.value.goals.find((goal) => goal.parentGoalId && goal.status !== "proved")?.id ?? subgoalId;
+        error.value = undefined;
+      } catch (caught) {
+        reportError(caught);
+      }
+      return;
+    }
+
     if (!diagramProofState.value) {
       return;
     }
@@ -472,17 +529,28 @@ export const useProofStore = defineStore("proof", () => {
   }
 
   function completeGoalBySubgoals(): void {
-    if (!proofState.value || !activeGoal.value || !diagramProofState.value) {
+    if (!proofState.value || !activeGoal.value) {
       return;
     }
 
     if (!canCompleteBySubgoals.value) {
-      reportError("Complete the diagram subgoals before pasting them into the main goal.");
+      reportError("Complete the subgoals before completing the main goal.");
       return;
     }
 
     try {
       const context = parseContext(contextText.value);
+      if (canCompleteByProductExt.value) {
+        const result = completeGoalByProductExt(proofState.value, activeGoal.value.id);
+        proofState.value = result.state;
+        selectedSubgoalId.value = undefined;
+        error.value = undefined;
+        return;
+      }
+      if (!diagramProofState.value) {
+        reportError("No diagram subgoals are available.");
+        return;
+      }
       const result = completeDiagramGoalBySubgoalsCore(
         context,
         diagramProofState.value,
@@ -665,6 +733,7 @@ export const useProofStore = defineStore("proof", () => {
     selectedExample,
     tacticOptions,
     diagram,
+    proofPanelSubgoals,
     diagramSubgoals,
     diagramRegions,
     auxiliaryNodes,

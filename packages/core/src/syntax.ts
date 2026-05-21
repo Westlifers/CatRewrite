@@ -7,6 +7,10 @@ export interface ObjectVarExpr {
   kind: "object";
   name: string;
   category: CategoryExpr;
+  productFactors?: {
+    left: ObjectExpr;
+    right: ObjectExpr;
+  };
 }
 
 export interface FunctorExpr {
@@ -84,7 +88,29 @@ export interface ComponentTerm {
   object: ObjectExpr;
 }
 
-export type Term = VarTerm | IdTerm | CompTerm | FunctorMapTerm | UnitTerm | CounitTerm | ComponentTerm;
+export interface ProductProjectionTerm {
+  kind: "productProjection";
+  product: ObjectVarExpr;
+  side: "left" | "right";
+}
+
+export interface ProductPairTerm {
+  kind: "productPair";
+  product: ObjectVarExpr;
+  left: Term;
+  right: Term;
+}
+
+export type Term =
+  | VarTerm
+  | IdTerm
+  | CompTerm
+  | FunctorMapTerm
+  | UnitTerm
+  | CounitTerm
+  | ComponentTerm
+  | ProductProjectionTerm
+  | ProductPairTerm;
 
 export interface Equation {
   lhs: Term;
@@ -92,7 +118,15 @@ export interface Equation {
   hom: HomType;
 }
 
-export type Decl = CategoryDecl | ObjectDecl | FunctorDecl | NatTransDecl | MorphismDecl | AdjunctionDecl | EquationDecl;
+export type Decl =
+  | CategoryDecl
+  | ObjectDecl
+  | ProductDecl
+  | FunctorDecl
+  | NatTransDecl
+  | MorphismDecl
+  | AdjunctionDecl
+  | EquationDecl;
 
 export interface CategoryDecl {
   kind: "categoryDecl";
@@ -102,6 +136,13 @@ export interface CategoryDecl {
 export interface ObjectDecl {
   kind: "objectDecl";
   object: ObjectVarExpr;
+}
+
+export interface ProductDecl {
+  kind: "productDecl";
+  product: ObjectVarExpr;
+  left: ObjectExpr;
+  right: ObjectExpr;
 }
 
 export interface FunctorDecl {
@@ -140,6 +181,13 @@ export const object = (name: string, category: CategoryExpr): ObjectVarExpr => (
   kind: "object",
   name,
   category
+});
+
+export const productObject = (name: string, category: CategoryExpr, left: ObjectExpr, right: ObjectExpr): ObjectVarExpr => ({
+  kind: "object",
+  name,
+  category,
+  productFactors: { left, right }
 });
 
 export const functor = (
@@ -212,6 +260,19 @@ export const component = (natTrans: NatTransExpr, object: ObjectExpr): Component
   kind: "component",
   natTrans,
   object
+});
+
+export const productProjection = (product: ObjectVarExpr, side: "left" | "right"): ProductProjectionTerm => ({
+  kind: "productProjection",
+  product,
+  side
+});
+
+export const productPair = (product: ObjectVarExpr, left: Term, right: Term): ProductPairTerm => ({
+  kind: "productPair",
+  product,
+  left,
+  right
 });
 
 export const emptyContext = (): Context => ({ decls: [] });

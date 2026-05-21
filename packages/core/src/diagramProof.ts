@@ -1,14 +1,25 @@
-import { regionEquation, type Diagram, type DiagramRegion } from "./diagram";
+import { regionEquation, type Diagram, type DiagramArrow, type DiagramNode, type DiagramRegion } from "./diagram";
+import { equalObject } from "./equality";
 import { createGoal, createProofState, type Goal, type ProofState, type ProofStep } from "./proofState";
 import { runTactic } from "./tactics";
-import type { Context, Equation } from "./syntax";
+import { productProjection, type Context, type Equation, type ObjectExpr, type ProductDecl } from "./syntax";
 import { termPattern, type PatternTerm, type RewriteRule } from "./rewrite";
+import { prettyObject, prettyTerm } from "./pretty";
 
 export interface DiagramProofState {
   diagram: Diagram;
   outerGoalRegionId: string;
   subgoals: DiagramSubgoal[];
   provedRegionIds: string[];
+  completion?: DiagramCompletion;
+}
+
+export type DiagramCompletion = ProductExtDiagramCompletion;
+
+export interface ProductExtDiagramCompletion {
+  kind: "productExt";
+  productName: string;
+  parentGoalId: string;
 }
 
 export interface DiagramSubgoal {
@@ -120,6 +131,60 @@ export function splitDiagramGoal(ctx: Context, state: DiagramProofState): Diagra
   );
 }
 
+export function splitDiagramGoalByProductExt(
+  ctx: Context,
+  state: DiagramProofState,
+  productName: string,
+  parentGoalId = "goal-1"
+): DiagramProofState {
+  if (state.completion) {
+    throw new Error("The diagram goal has already been split by a completion principle.");
+  }
+
+  const product = requireProductDecl(ctx, productName);
+  const outer = state.diagram.regions.find((region) => region.id === state.outerGoalRegionId);
+  if (!outer) {
+    throw new Error("No outer goal region is available.");
+  }
+
+  const productNodeId = pathEnd(state.diagram, outer.leftPath);
+  const productNode = state.diagram.nodes.find((node) => node.id === productNodeId);
+  if (!productNode || !equalObject(productNode.object, product.product)) {
+    throw new Error(`product_ext ${productName} applies only to goals whose target is ${productName}.`);
+  }
+
+  const leftProjection = ensureProjection(state.diagram, product, productNodeId, "left");
+  const rightProjection = ensureProjection(leftProjection.diagram, product, productNodeId, "right");
+  const pi1Region: DiagramRegion = {
+    id: `${outer.id}-pi1`,
+    label: `${product.product.name} projection 1`,
+    leftPath: [...outer.leftPath, leftProjection.arrowId],
+    rightPath: [...outer.rightPath, leftProjection.arrowId],
+    goalId: `${parentGoalId}.pi1`
+  };
+  const pi2Region: DiagramRegion = {
+    id: `${outer.id}-pi2`,
+    label: `${product.product.name} projection 2`,
+    leftPath: [...outer.leftPath, rightProjection.arrowId],
+    rightPath: [...outer.rightPath, rightProjection.arrowId],
+    goalId: `${parentGoalId}.pi2`
+  };
+  const withRegions: DiagramProofState = {
+    ...state,
+    diagram: {
+      ...rightProjection.diagram,
+      regions: [...rightProjection.diagram.regions, pi1Region, pi2Region]
+    },
+    completion: {
+      kind: "productExt",
+      productName: product.product.name,
+      parentGoalId
+    }
+  };
+
+  return createSubgoalFromRegion(ctx, createSubgoalFromRegion(ctx, withRegions, pi1Region.id), pi2Region.id);
+}
+
 export function splittableRegions(state: DiagramProofState): DiagramRegion[] {
   const subgoalRegionIds = new Set(state.subgoals.map((subgoal) => subgoal.regionId));
   const declaredRegions = state.diagram.regions.filter(
@@ -219,6 +284,105 @@ function pathBoundaries(diagram: Diagram, path: string[]): string[] {
   });
 
   return [arrows[0].from, ...arrows.map((arrow) => arrow.to)];
+}
+
+function pathEnd(diagram: Diagram, path: string[]): string {
+  const arrowId = path.at(-1);
+  if (!arrowId) {
+    throw new Error("A path must contain at least one arrow.");
+  }
+  const arrow = diagram.arrows.find((candidate) => candidate.id === arrowId);
+  if (!arrow) {
+    throw new Error(`Unknown arrow: ${arrowId}`);
+  }
+  return arrow.to;
+}
+
+function ensureProjection(
+  diagram: Diagram,
+  product: ProductDecl,
+  productNodeId: string,
+  side: "left" | "right"
+): { diagram: Diagram; arrowId: string } {
+  const targetObject = side === "left" ? product.left : product.right;
+  const existingTarget = diagram.nodes.find((node) => equalObject(node.object, targetObject));
+  const targetNode = existingTarget ?? projectionNode(diagram, productNodeId, targetObject, side);
+  const arrowId = `${product.product.name}-${side === "left" ? "pi1" : "pi2"}`;
+
+  if (diagram.arrows.some((arrow) => arrow.id === arrowId)) {
+    return { diagram, arrowId };
+  }
+
+  const term = productProjection(product.product, side);
+  const arrow: DiagramArrow = {
+    id: arrowId,
+    from: productNodeId,
+    to: targetNode.id,
+    label: prettyTerm(term),
+    term,
+    status: "constructed"
+  };
+
+  return {
+    diagram: {
+      ...diagram,
+      nodes: existingTarget ? diagram.nodes : [...diagram.nodes, targetNode],
+      arrows: [...diagram.arrows, arrow]
+    },
+    arrowId
+  };
+}
+
+function projectionNode(
+  diagram: Diagram,
+  productNodeId: string,
+  object: ObjectExpr,
+  side: "left" | "right"
+): DiagramNode {
+  const productNode = diagram.nodes.find((node) => node.id === productNodeId);
+  const base = productNode?.position ?? { x: 415, y: 155 };
+
+  return {
+    id: uniqueNodeId(diagram, `${objectLabel(object)}-${side === "left" ? "factor-1" : "factor-2"}`),
+    label: prettyObject(object),
+    object,
+    position: {
+      x: base.x + 120,
+      y: base.y + (side === "left" ? -72 : 72)
+    },
+    status: "constructed"
+  };
+}
+
+function uniqueNodeId(diagram: Diagram, base: string): string {
+  const normalized = base.replace(/\s+/g, "-").toLowerCase();
+  if (!diagram.nodes.some((node) => node.id === normalized)) {
+    return normalized;
+  }
+  let index = 2;
+  while (diagram.nodes.some((node) => node.id === `${normalized}-${index}`)) {
+    index += 1;
+  }
+  return `${normalized}-${index}`;
+}
+
+function requireProductDecl(ctx: Context, name: string): ProductDecl {
+  const decl = ctx.decls.find(
+    (candidate): candidate is ProductDecl => candidate.kind === "productDecl" && candidate.product.name === name
+  );
+  if (!decl) {
+    throw new Error(`Unknown product: ${name}`);
+  }
+  return decl;
+}
+
+function objectLabel(object: ObjectExpr): string {
+  switch (object.kind) {
+    case "object":
+      return object.name;
+    case "functorObject":
+      return `${object.functor.name} ${objectLabel(object.object)}`;
+  }
 }
 
 function appendSubgoal(
@@ -323,7 +487,15 @@ export function proveDiagramSubgoal(
     throw new Error(`Diagram subgoal is already proved: ${subgoalId}`);
   }
 
-  const proofState = createProofState(ctx, [createGoal(subgoal.id, subgoal.equation)]);
+  const proofState = {
+    ...createProofState(ctx, [
+      {
+        ...createGoal(subgoal.id, subgoal.equation),
+        proofSteps: subgoal.proofSteps
+      }
+    ]),
+    proofLog: subgoal.proofSteps
+  };
   const result = runTactic(proofState, subgoal.id, tactic, rules);
   const updatedGoal = result.goal;
   const updatedSubgoal: DiagramSubgoal = {
@@ -362,6 +534,46 @@ export function completeDiagramGoalBySubgoals(
   const openSubgoals = state.subgoals.filter((subgoal) => subgoal.status !== "proved");
   if (openSubgoals.length > 0) {
     throw new Error(`Cannot paste with open subgoals: ${openSubgoals.map((subgoal) => subgoal.id).join(", ")}`);
+  }
+
+  if (state.completion?.kind === "productExt") {
+    const goal = proofState.goals.find((candidate) => candidate.id === goalId);
+    if (!goal) {
+      throw new Error(`Unknown goal: ${goalId}`);
+    }
+
+    const productSubgoals = state.subgoals.filter((subgoal) => subgoal.id.startsWith(`${goalId}.pi`));
+    const step: ProofStep = {
+      id: `step-${proofState.proofLog.length + 1}`,
+      goalId,
+      tactic: `complete product_ext ${state.completion.productName}`,
+      before: goal.equation,
+      after: goal.equation,
+      message: `completed by product extensionality using ${productSubgoals.map((subgoal) => subgoal.id).join(" and ")}`
+    };
+    const completedGoal: Goal = {
+      ...goal,
+      status: "proved",
+      proofSteps: [...goal.proofSteps, step]
+    };
+    const provedRegionIds = state.provedRegionIds.includes(state.outerGoalRegionId)
+      ? state.provedRegionIds
+      : [...state.provedRegionIds, state.outerGoalRegionId];
+
+    return {
+      proofState: {
+        ...proofState,
+        goals: proofState.goals.map((candidate) => (candidate.id === goalId ? completedGoal : candidate)),
+        activeGoalId: goalId,
+        proofLog: [...proofState.proofLog, step]
+      },
+      diagramProofState: {
+        ...state,
+        provedRegionIds
+      },
+      goal: completedGoal,
+      step
+    };
   }
 
   const result = runTactic({ ...proofState, context: ctx }, goalId, "try", [...rules, ...diagramSubgoalRules(state)]);

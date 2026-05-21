@@ -1,10 +1,10 @@
-import { equalTerm } from "./equality";
+import { equalObject, equalTerm } from "./equality";
 import { generatedRules } from "./inspect";
 import { normalizeTerm } from "./normalize";
 import type { Goal, ProofState, ProofStep } from "./proofState";
 import { applyRewriteOnce, simplify, type RewriteRule, type RuleTag } from "./rewrite";
-import { type Equation, type Term } from "./syntax";
-import { typecheckEquation } from "./typecheck";
+import { comp, productProjection, type Equation, type ProductDecl, type Term } from "./syntax";
+import { inferTerm, typecheckEquation } from "./typecheck";
 
 interface TacticComputation {
   equation: Equation;
@@ -32,32 +32,47 @@ export function runTactic(state: ProofState, goalId: string, tactic: string, rul
   let after: Equation;
   let message: string;
   let ruleIds: string[] = [];
+  let closed = false;
+  let extraGoals: Goal[] = [];
+  let activeGoalId = state.activeGoalId;
 
   if (command === "normalize") {
     after = normalizeEquation(state, before);
-    message = equationsEqual(after) ? "normalized and closed the goal" : "normalized both sides";
+    closed = equationsEqual(after);
+    message = closed ? "normalized and closed the goal" : "normalized both sides";
   } else if (command === "simp") {
     const result = simplifyEquation(state, before, generatedRules(state.context, rules));
     after = result.equation;
     ruleIds = result.ruleIds;
-    message = equationsEqual(after)
+    closed = equationsEqual(after);
+    message = closed
       ? closeMessage("simplified and closed the goal", ruleIds)
       : progressMessage("simplified both sides", ruleIds);
   } else if (command === "try") {
     const result = tryEquation(state, before, generatedRules(state.context, rules));
     after = result.equation;
     ruleIds = result.ruleIds;
-    message = equationsEqual(after)
+    closed = equationsEqual(after);
+    message = closed
       ? closeMessage("try closed the goal", ruleIds)
       : progressMessage("try could not close the goal", ruleIds);
+  } else if (command.startsWith("product_ext ")) {
+    const productName = command.slice("product_ext ".length).trim();
+    const result = splitProductExtGoals(state, goal, productName);
+    after = before;
+    extraGoals = result.goals;
+    activeGoalId = result.goals[0]?.id ?? activeGoalId;
+    message = `split by product_ext ${productName} into ${result.goals.map((child) => child.id).join(" and ")}`;
   } else if (command.startsWith("rw ")) {
     const ruleName = command.slice(3).trim();
     after = rewriteEquationOnce(state, before, ruleName, generatedRules(state.context, rules));
-    message = equationsEqual(after) ? `rewrote with ${ruleName} and closed the goal` : `rewrote with ${ruleName}`;
+    closed = equationsEqual(after);
+    message = closed ? `rewrote with ${ruleName} and closed the goal` : `rewrote with ${ruleName}`;
   } else if (command.startsWith("naturality ")) {
     const ruleName = parseNaturalityRuleName(command);
     after = rewriteEquationOnce(state, before, ruleName, generatedRules(state.context, rules));
-    message = equationsEqual(after)
+    closed = equationsEqual(after);
+    message = closed
       ? `applied naturality of ${ruleName} and closed the goal`
       : `applied naturality of ${ruleName}`;
   } else {
@@ -67,7 +82,7 @@ export function runTactic(state: ProofState, goalId: string, tactic: string, rul
   const updatedGoal: Goal = {
     ...goal,
     equation: after,
-    status: equationsEqual(after) ? "proved" : goal.status,
+    status: closed ? "proved" : goal.status,
     proofSteps: [
       ...goal.proofSteps,
       {
@@ -85,7 +100,8 @@ export function runTactic(state: ProofState, goalId: string, tactic: string, rul
   return {
     state: {
       ...state,
-      goals: state.goals.map((candidate) => (candidate.id === goalId ? updatedGoal : candidate)),
+      goals: [...state.goals.map((candidate) => (candidate.id === goalId ? updatedGoal : candidate)), ...extraGoals],
+      activeGoalId,
       proofLog: [...state.proofLog, step]
     },
     goal: updatedGoal,
@@ -118,6 +134,51 @@ function tryEquation(state: ProofState, equation: Equation, rules: RewriteRule[]
   };
 }
 
+function splitProductExtGoals(
+  state: ProofState,
+  goal: Goal,
+  productName: string
+): { goals: Goal[] } {
+  const product = requireProductDecl(state, productName);
+  const hom = inferTerm(state.context, goal.equation.lhs);
+  if (!equalObject(hom.target, product.product)) {
+    throw new Error(`product_ext ${productName} applies only to goals whose target is ${productName}.`);
+  }
+  if (state.goals.some((candidate) => candidate.parentGoalId === goal.id)) {
+    throw new Error(`Goal ${goal.id} already has subgoals.`);
+  }
+
+  return {
+    goals: [
+      productExtGoal(state, goal, product, "left"),
+      productExtGoal(state, goal, product, "right")
+    ]
+  };
+}
+
+function productExtGoal(state: ProofState, goal: Goal, product: ProductDecl, side: "left" | "right"): Goal {
+  const projection = productProjection(product.product, side);
+  const equation = typecheckEquation(
+    state.context,
+    comp(goal.equation.lhs, projection),
+    comp(goal.equation.rhs, projection)
+  );
+  const suffix = side === "left" ? "pi1" : "pi2";
+
+  return {
+    id: `${goal.id}.${suffix}`,
+    equation,
+    status: "open",
+    proofSteps: [],
+    parentGoalId: goal.id,
+    completion: {
+      kind: "productExt",
+      productName: product.product.name,
+      side
+    }
+  };
+}
+
 function simplifyEquationWithTags(
   state: ProofState,
   equation: Equation,
@@ -147,6 +208,74 @@ function rewriteEquationOnce(state: ProofState, equation: Equation, ruleName: st
 
 function rewriteTermOnce(term: Term, rule: RewriteRule): Term {
   return applyRewriteOnce(term, [rule])?.term ?? term;
+}
+
+function requireProductDecl(state: ProofState, name: string): ProductDecl {
+  const decl = state.context.decls.find(
+    (candidate): candidate is ProductDecl => candidate.kind === "productDecl" && candidate.product.name === name
+  );
+  if (!decl) {
+    throw new Error(`Unknown product: ${name}`);
+  }
+  return decl;
+}
+
+export function completeGoalByProductExt(state: ProofState, goalId = rootGoalId(state)): TacticResult {
+  if (!goalId) {
+    throw new Error("No goal to complete by product extensionality.");
+  }
+
+  const goal = state.goals.find((candidate) => candidate.id === goalId);
+  if (!goal) {
+    throw new Error(`Unknown goal: ${goalId}`);
+  }
+  if (goal.status === "proved") {
+    throw new Error(`Goal is already proved: ${goalId}`);
+  }
+
+  const children = state.goals.filter(
+    (candidate) => candidate.parentGoalId === goalId && candidate.completion?.kind === "productExt"
+  );
+  if (children.length !== 2) {
+    throw new Error(`Goal ${goalId} does not have product_ext subgoals.`);
+  }
+
+  const openChildren = children.filter((child) => child.status !== "proved");
+  if (openChildren.length > 0) {
+    throw new Error(`Cannot complete product_ext with open subgoals: ${openChildren.map((child) => child.id).join(", ")}`);
+  }
+
+  const productNames = [...new Set(children.map((child) => child.completion?.productName).filter(Boolean))];
+  const productName = productNames[0] ?? "product";
+  const step: ProofStep = {
+    id: `step-${state.proofLog.length + 1}`,
+    goalId,
+    tactic: `complete product_ext ${productName}`,
+    before: goal.equation,
+    after: goal.equation,
+    message: `completed by product extensionality using ${children.map((child) => child.id).join(" and ")}`
+  };
+  const updatedGoal: Goal = {
+    ...goal,
+    status: "proved",
+    proofSteps: [...goal.proofSteps, step]
+  };
+  const updatedState: ProofState = {
+    ...state,
+    goals: state.goals.map((candidate) => (candidate.id === goalId ? updatedGoal : candidate)),
+    activeGoalId: goalId,
+    proofLog: [...state.proofLog, step]
+  };
+
+  return {
+    state: updatedState,
+    goal: updatedGoal,
+    step
+  };
+}
+
+function rootGoalId(state: ProofState): string | undefined {
+  return state.goals.find((goal) => !goal.parentGoalId)?.id ?? state.activeGoalId;
 }
 
 function equationsEqual(equation: Equation): boolean {

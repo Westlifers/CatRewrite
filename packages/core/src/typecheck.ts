@@ -1,5 +1,5 @@
 import { equalCategory, equalHom, equalObject, objectCategory } from "./equality";
-import { functorObject, type Context, type Equation, type HomType, type Term } from "./syntax";
+import { functorObject, type Context, type Equation, type HomType, type ProductDecl, type Term } from "./syntax";
 
 export class TypecheckError extends Error {
   readonly kind = "typecheckError";
@@ -74,6 +74,32 @@ export function inferTerm(_ctx: Context, term: Term): HomType {
         target: functorObject(term.natTrans.target, term.object)
       };
     }
+
+    case "productProjection": {
+      const product = requireProductDecl(_ctx, term.product);
+      return {
+        source: product.product,
+        target: term.side === "left" ? product.left : product.right
+      };
+    }
+
+    case "productPair": {
+      const product = requireProductDecl(_ctx, term.product);
+      const left = inferTerm(_ctx, term.left);
+      const right = inferTerm(_ctx, term.right);
+
+      if (!equalObject(left.source, right.source)) {
+        throw new TypecheckError("Cannot form product pairing: paired morphisms must have the same source.");
+      }
+      if (!equalObject(left.target, product.left) || !equalObject(right.target, product.right)) {
+        throw new TypecheckError("Cannot form product pairing: paired morphisms do not target the product factors.");
+      }
+
+      return {
+        source: left.source,
+        target: product.product
+      };
+    }
   }
 }
 
@@ -86,4 +112,15 @@ export function typecheckEquation(ctx: Context, lhs: Term, rhs: Term): Equation 
   }
 
   return { lhs, rhs, hom: lhsHom };
+}
+
+function requireProductDecl(ctx: Context, product: ProductDecl["product"]): ProductDecl {
+  const decl = ctx.decls.find(
+    (candidate): candidate is ProductDecl =>
+      candidate.kind === "productDecl" && equalObject(candidate.product, product)
+  );
+  if (!decl) {
+    throw new TypecheckError(`Unknown product object: ${product.name}`);
+  }
+  return decl;
 }

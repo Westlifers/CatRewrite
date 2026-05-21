@@ -27,6 +27,7 @@ import {
   createGoal,
   createProofState,
   splitDiagramGoal,
+  splitDiagramGoalByProductExt,
   splittableRegions,
   verticalCompositeNaturalityDiagram,
   type Diagram
@@ -405,5 +406,68 @@ describe("diagram paths", () => {
       "F.map(f) >> alpha_Y = alpha_X >> G.map(f)",
       "G.map(f) >> beta_Y = beta_X >> H.map(f)"
     ]);
+  });
+
+  it("splits a product extensionality goal into projection diagram subgoals", () => {
+    const ctx = parseContext(`
+category C
+object W : C
+object X : C
+object A : C
+object B : C
+product P of A B
+morphism h : W -> X
+morphism f : X -> A
+morphism g : X -> B
+`);
+    const equation = parseEquation("h >> <f, g> = <h >> f, h >> g>", ctx);
+    const diagram = equationDiagram(ctx, equation);
+    const split = splitDiagramGoalByProductExt(ctx, createDiagramProofState(diagram), "P", "goal-1");
+
+    expect(split.diagram.arrows.some((arrow) => arrow.id === "P-pi1" && prettyTerm(arrow.term) === "pi1(P)")).toBe(true);
+    expect(split.diagram.arrows.some((arrow) => arrow.id === "P-pi2" && prettyTerm(arrow.term) === "pi2(P)")).toBe(true);
+    expect(split.subgoals.map((subgoal) => subgoal.id)).toEqual(["goal-1.pi1", "goal-1.pi2"]);
+    expect(split.subgoals.map((subgoal) => prettyEquation(subgoal.originalEquation))).toEqual([
+      "(h >> <f, g>_P) >> pi1(P) = <h >> f, h >> g>_P >> pi1(P)",
+      "(h >> <f, g>_P) >> pi2(P) = <h >> f, h >> g>_P >> pi2(P)"
+    ]);
+
+    const provedPi1 = proveDiagramSubgoal(ctx, split, "goal-1.pi1", "try");
+    const provedBoth = proveDiagramSubgoal(ctx, provedPi1, "goal-1.pi2", "try");
+    const completed = completeDiagramGoalBySubgoals(
+      ctx,
+      provedBoth,
+      createProofState(ctx, [createGoal("goal-1", equation)]),
+      "goal-1"
+    );
+
+    expect(completed.goal.status).toBe("proved");
+    expect(completed.step.message).toBe(
+      "completed by product extensionality using goal-1.pi1 and goal-1.pi2"
+    );
+    expect(completed.diagramProofState.provedRegionIds).toContain("goal");
+  });
+
+  it("preserves diagram subgoal trace across multiple tactics", () => {
+    const ctx = parseContext(`
+category C
+object Z : C
+object A : C
+object B : C
+product P of A B
+morphism f : Z -> A
+morphism g : Z -> B
+`);
+    const equation = parseEquation("<f, g> >> pi1(P) = f", ctx);
+    const diagram = equationDiagram(ctx, equation);
+    const state = createSubgoalFromPaths(ctx, createDiagramProofState(diagram), {
+      leftPath: diagram.regions[0].leftPath,
+      rightPath: diagram.regions[0].rightPath
+    });
+    const normalized = proveDiagramSubgoal(ctx, state, "subgoal-1", "normalize");
+    const simplified = proveDiagramSubgoal(ctx, normalized, "subgoal-1", "simp");
+
+    expect(simplified.subgoals[0].status).toBe("proved");
+    expect(simplified.subgoals[0].proofSteps.map((step) => step.tactic)).toEqual(["normalize", "simp"]);
   });
 });

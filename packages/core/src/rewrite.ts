@@ -5,16 +5,28 @@ import {
   counit,
   id,
   map,
+  productPair,
+  productProjection,
   unit,
   type AdjunctionExpr,
   type Context,
   type FunctorExpr,
   type NatTransExpr,
   type ObjectExpr,
+  type ObjectVarExpr,
   type Term
 } from "./syntax";
 
-export type RuleTag = "simp" | "naturality" | "adjunction" | "triangle" | "functoriality" | "user";
+export type RuleTag =
+  | "simp"
+  | "naturality"
+  | "adjunction"
+  | "triangle"
+  | "functoriality"
+  | "product"
+  | "universal"
+  | "extensionality"
+  | "user";
 
 export type PatternObject = ObjectExpr | PatternObjectVar | PatternFunctorObject;
 
@@ -37,7 +49,9 @@ export type PatternTerm =
   | PatternFunctorMapTerm
   | PatternUnitTerm
   | PatternCounitTerm
-  | PatternComponentTerm;
+  | PatternComponentTerm
+  | PatternProductProjectionTerm
+  | PatternProductPairTerm;
 
 export interface PatternTermVar {
   kind: "termPattern";
@@ -77,6 +91,19 @@ export interface PatternComponentTerm {
   kind: "component";
   natTrans: NatTransExpr;
   object: PatternObject;
+}
+
+export interface PatternProductProjectionTerm {
+  kind: "productProjection";
+  product: ObjectVarExpr;
+  side: "left" | "right";
+}
+
+export interface PatternProductPairTerm {
+  kind: "productPair";
+  product: ObjectVarExpr;
+  left: PatternTerm;
+  right: PatternTerm;
 }
 
 export interface RewriteRule {
@@ -131,7 +158,22 @@ export function applyRewriteOnce(term: Term, rules: RewriteRule[]): RewriteResul
     case "unit":
     case "counit":
     case "component":
+    case "productProjection":
       return undefined;
+
+    case "productPair": {
+      const left = applyRewriteOnce(term.left, rules);
+      if (left) {
+        return { term: productPair(term.product, left.term, term.right), rule: left.rule };
+      }
+
+      const right = applyRewriteOnce(term.right, rules);
+      if (right) {
+        return { term: productPair(term.product, term.left, right.term), rule: right.rule };
+      }
+
+      return undefined;
+    }
 
     case "map": {
       const inner = applyRewriteOnce(term.term, rules);
@@ -233,6 +275,17 @@ function matchTermWithEnv(pattern: PatternTerm, term: Term, env: MatchEnv): Matc
       return term.kind === "component" && equalNatTrans(pattern.natTrans, term.natTrans)
         ? matchObjectWithEnv(pattern.object, term.object, env)
         : undefined;
+    case "productProjection":
+      return term.kind === "productProjection" && pattern.side === term.side && equalObject(pattern.product, term.product)
+        ? env
+        : undefined;
+    case "productPair": {
+      if (term.kind !== "productPair" || !equalObject(pattern.product, term.product)) {
+        return undefined;
+      }
+      const leftEnv = matchTermWithEnv(pattern.left, term.left, env);
+      return leftEnv ? matchTermWithEnv(pattern.right, term.right, leftEnv) : undefined;
+    }
   }
 }
 
@@ -300,6 +353,10 @@ function instantiateTerm(pattern: PatternTerm, env: MatchEnv): Term {
       return counit(pattern.adjunction, instantiateObject(pattern.object, env));
     case "component":
       return component(pattern.natTrans, instantiateObject(pattern.object, env));
+    case "productProjection":
+      return productProjection(pattern.product, pattern.side);
+    case "productPair":
+      return productPair(pattern.product, instantiateTerm(pattern.left, env), instantiateTerm(pattern.right, env));
   }
 }
 

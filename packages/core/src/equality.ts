@@ -80,5 +80,18 @@ export function equalTerm(left: Term, right: Term): boolean {
         equalNatTrans(left.natTrans, right.natTrans) &&
         equalObject(left.object, right.object)
       );
+    case "productProjection":
+      return (
+        right.kind === "productProjection" &&
+        left.side === right.side &&
+        equalObject(left.product, right.product)
+      );
+    case "productPair":
+      return (
+        right.kind === "productPair" &&
+        equalObject(left.product, right.product) &&
+        equalTerm(left.left, right.left) &&
+        equalTerm(left.right, right.right)
+      );
   }
 }

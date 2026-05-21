@@ -8,6 +8,9 @@ import {
   morphism,
   natTrans,
   object,
+  productObject,
+  productPair,
+  productProjection,
   unit,
   type AdjunctionExpr,
   type Context,
@@ -15,10 +18,12 @@ import {
   type NatTransExpr,
   type ObjectExpr,
   type ObjectVarExpr,
+  type ProductDecl,
   type Term
 } from "./syntax";
 import { comp, id, map } from "./syntax";
-import { typecheckEquation } from "./typecheck";
+import { equalCategory, equalObject, objectCategory } from "./equality";
+import { inferTerm, typecheckEquation } from "./typecheck";
 
 export class ParseError extends Error {
   readonly kind = "parseError";
@@ -56,6 +61,21 @@ export function parseContext(input: string): Context {
       const parsed = object(objectMatch[1], requireMap(env.categories, objectMatch[2], "category"));
       env.objects.set(parsed.name, parsed);
       ctx.decls.push({ kind: "objectDecl", object: parsed });
+      continue;
+    }
+
+    const productMatch = /^product\s+([A-Za-z][A-Za-z0-9_]*)\s+of\s+(.+)\s+(.+)$/.exec(line);
+    if (productMatch) {
+      const left = parseObjectExpr(productMatch[2], ctx);
+      const right = parseObjectExpr(productMatch[3], ctx);
+      const leftCategory = objectCategory(left);
+      const rightCategory = objectCategory(right);
+      if (!equalCategory(leftCategory, rightCategory)) {
+        throw new ParseError("Product factors must belong to the same category.");
+      }
+      const parsed = productObject(productMatch[1], leftCategory, left, right);
+      env.objects.set(parsed.name, parsed);
+      ctx.decls.push({ kind: "productDecl", product: parsed, left, right });
       continue;
     }
 
@@ -160,6 +180,28 @@ export function parseTerm(input: string, ctx: Context): Term {
     return component(requireNatTrans(ctx, componentMatch[1]), parseObjectExpr(componentMatch[2], ctx));
   }
 
+  const piMatch = /^pi([12])\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*\)$/.exec(trimmed);
+  if (piMatch) {
+    return productProjection(requireProduct(ctx, piMatch[2]).product, piMatch[1] === "1" ? "left" : "right");
+  }
+
+  const pairCallMatch = /^pair\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*(.+)\s*,\s*(.+)\)$/.exec(trimmed);
+  if (pairCallMatch) {
+    return productPair(
+      requireProduct(ctx, pairCallMatch[1]).product,
+      parseTerm(pairCallMatch[2], ctx),
+      parseTerm(pairCallMatch[3], ctx)
+    );
+  }
+
+  const anglePairMatch = /^<(.+),(.+)>(?:_([A-Za-z][A-Za-z0-9_]*))?$/.exec(trimmed);
+  if (anglePairMatch) {
+    const left = parseTerm(anglePairMatch[1], ctx);
+    const right = parseTerm(anglePairMatch[2], ctx);
+    const product = anglePairMatch[3] ? requireProduct(ctx, anglePairMatch[3]) : resolvePairProduct(ctx, left, right);
+    return productPair(product.product, left, right);
+  }
+
   const morph = findMorphism(ctx, trimmed);
   if (morph) {
     return morph;
@@ -170,12 +212,21 @@ export function parseTerm(input: string, ctx: Context): Term {
 
 export function parseObjectExpr(input: string, ctx: Context): ObjectExpr {
   const trimmed = stripOuterParens(input.trim());
+  const productParts = splitProductObject(trimmed);
+  if (productParts) {
+    return resolveProductObject(ctx, parseObjectExpr(productParts[0], ctx), parseObjectExpr(productParts[1], ctx));
+  }
+
   const parts = trimmed.split(/\s+/);
 
   if (parts.length === 1) {
     const objectDecl = ctx.decls.find((decl) => decl.kind === "objectDecl" && decl.object.name === parts[0]);
     if (objectDecl?.kind === "objectDecl") {
       return objectDecl.object;
+    }
+    const productDecl = ctx.decls.find((decl): decl is ProductDecl => decl.kind === "productDecl" && decl.product.name === parts[0]);
+    if (productDecl) {
+      return productDecl.product;
     }
     throw new ParseError(`Unknown object: ${parts[0]}`);
   }
@@ -240,24 +291,78 @@ function requireAdjunction(ctx: Context, name: string): AdjunctionExpr {
   return decl.adjunction;
 }
 
+function requireProduct(ctx: Context, name: string): ProductDecl {
+  const decl = ctx.decls.find((candidate): candidate is ProductDecl => candidate.kind === "productDecl" && candidate.product.name === name);
+  if (!decl) {
+    throw new ParseError(`Unknown product: ${name}`);
+  }
+  return decl;
+}
+
 function findMorphism(ctx: Context, name: string): ReturnType<typeof morphism> | undefined {
   const decl = ctx.decls.find((candidate) => candidate.kind === "morphismDecl" && candidate.term.name === name);
   return decl?.kind === "morphismDecl" ? decl.term : undefined;
 }
 
+function resolvePairProduct(ctx: Context, left: Term, right: Term): ProductDecl {
+  const leftHom = inferTerm(ctx, left);
+  const rightHom = inferTerm(ctx, right);
+  if (!equalObject(leftHom.source, rightHom.source)) {
+    throw new ParseError("Cannot infer product pairing target: paired morphisms must have the same source.");
+  }
+  return resolveProductDecl(ctx, leftHom.target, rightHom.target);
+}
+
+function resolveProductObject(ctx: Context, left: ObjectExpr, right: ObjectExpr): ObjectVarExpr {
+  return resolveProductDecl(ctx, left, right).product;
+}
+
+function resolveProductDecl(ctx: Context, left: ObjectExpr, right: ObjectExpr): ProductDecl {
+  const matches = ctx.decls.filter(
+    (decl): decl is ProductDecl =>
+      decl.kind === "productDecl" && equalObject(decl.left, left) && equalObject(decl.right, right)
+  );
+  if (matches.length === 0) {
+    throw new ParseError("No chosen product of these factors is declared.");
+  }
+  if (matches.length > 1) {
+    throw new ParseError(`Ambiguous product ${matches.map((decl) => decl.product.name).join(", ")}; use a product name explicitly.`);
+  }
+  return matches[0];
+}
+
+function splitProductObject(input: string): [string, string] | undefined {
+  for (const separator of ["\\times", " times ", " x ", " * ", " × "]) {
+    const parts = splitTopLevel(input, separator).filter(Boolean);
+    if (parts.length === 2) {
+      return [parts[0], parts[1]];
+    }
+  }
+  return undefined;
+}
+
 function splitTopLevel(input: string, separator: string): string[] {
   const parts: string[] = [];
   let depth = 0;
+  let angleDepth = 0;
   let start = 0;
   let index = 0;
 
   while (index < input.length) {
     const char = input[index];
+    if (angleDepth > 0 && input.startsWith(">>", index)) {
+      index += 2;
+      continue;
+    }
     if (char === "(") {
       depth += 1;
     } else if (char === ")") {
       depth -= 1;
-    } else if (depth === 0 && input.startsWith(separator, index)) {
+    } else if (char === "<") {
+      angleDepth += 1;
+    } else if (char === ">" && angleDepth > 0 && !input.startsWith(">>", index)) {
+      angleDepth -= 1;
+    } else if (depth === 0 && angleDepth === 0 && input.startsWith(separator, index)) {
       parts.push(input.slice(start, index).trim());
       index += separator.length;
       start = index;

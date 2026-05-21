@@ -23,5 +23,11 @@ export const baseTacticOptions: TacticOption[] = [
     label: "normalize",
     command: "normalize",
     description: "Normalize identities, associativity, and functoriality on both sides."
+  },
+  {
+    id: "product-ext",
+    label: "product_ext P",
+    command: "product_ext P",
+    description: "Close an equality of maps into a product by checking both projections."
   }
 ];
