@@ -1,5 +1,7 @@
 import {
   createGoal,
+  createIsoGoal,
+  completeGoalByIso,
   completeGoalByProductExt,
   completeDiagramGoalBySubgoals as completeDiagramGoalBySubgoalsCore,
   createDiagramProofState,
@@ -12,12 +14,15 @@ import {
   equationDiagram,
   inspectEquation,
   latexEquation,
+  latexGoalTarget,
   latexHom,
   parseContext,
   parseEquation,
+  parseIsoGoal,
   parseObjectExpr,
   parseTerm,
   prettyEquation,
+  prettyGoalTarget,
   prettyHom,
   proofExamples,
   baseTacticOptions,
@@ -29,15 +34,22 @@ import {
   splitDiagramGoal,
   splitDiagramGoalByProductExt,
   splittableRegions,
+  equalObject,
+  isIsoGoalText,
   type Diagram,
   type DiagramArrow,
   type DiagramNode,
   type DiagramRegion,
   type DiagramProofState,
+  type Goal,
   type GoalInspection,
+  type GoalTarget,
   type ProofExample,
+  type ProductDecl,
   type ProofState,
-  type RewriteRule
+  type RewriteRule,
+  type TerminalDecl,
+  typecheckEquation
 } from "@catrewrite/core";
 import { defineStore } from "pinia";
 import { computed, ref, watch } from "vue";
@@ -65,10 +77,10 @@ export const useProofStore = defineStore("proof", () => {
   const activePathSide = ref<"left" | "right">("left");
   const leftPath = ref<string[]>(["top", "right"]);
   const rightPath = ref<string[]>(["left", "bottom"]);
-  const auxiliaryArrowId = ref("g-mid");
+  const auxiliaryArrowId = ref("aux-1");
   const auxiliaryFrom = ref("rhs-node-1");
   const auxiliaryTo = ref("lhs-node-2");
-  const auxiliaryTermText = ref("G.map(f)");
+  const auxiliaryTermText = ref("");
   const auxiliaryNodeId = ref("aux-node");
   const auxiliaryNodeLabel = ref("");
   const auxiliaryNodeObjectText = ref("G Y");
@@ -95,14 +107,10 @@ export const useProofStore = defineStore("proof", () => {
       : "Main goal"
   );
   const goalStatus = computed(() => activeGoal.value?.status ?? "open");
-  const currentEquation = computed(() => (activeGoal.value ? prettyEquation(activeGoal.value.equation) : ""));
-  const currentEquationLatex = computed(() => (activeGoal.value ? latexEquation(activeGoal.value.equation) : ""));
-  const activeProofEquation = computed(() =>
-    activeProofTarget.value ? prettyEquation(activeProofTarget.value.equation) : ""
-  );
-  const activeProofEquationLatex = computed(() =>
-    activeProofTarget.value ? latexEquation(activeProofTarget.value.equation) : ""
-  );
+  const currentEquation = computed(() => (activeGoal.value ? prettyGoalTarget(activeGoal.value.target) : ""));
+  const currentEquationLatex = computed(() => (activeGoal.value ? latexGoalTarget(activeGoal.value.target) : ""));
+  const activeProofEquation = computed(() => proofTargetText(activeProofTarget.value));
+  const activeProofEquationLatex = computed(() => proofTargetLatex(activeProofTarget.value));
   const activeProofStatus = computed(() => activeProofTarget.value?.status ?? "open");
   const canRunTactic = computed(() => Boolean(activeProofTarget.value) && activeProofStatus.value !== "proved");
   const activeProofSteps = computed(() => activeProofTarget.value?.proofSteps ?? proofState.value?.proofLog ?? []);
@@ -110,12 +118,28 @@ export const useProofStore = defineStore("proof", () => {
     diagramProofState.value ? diagramSubgoalRules(diagramProofState.value) : []
   );
   const inspection = computed<GoalInspection | undefined>(() =>
-    proofState.value && activeProofTarget.value
+    proofState.value && activeProofTarget.value && proofTargetGoalTarget(activeProofTarget.value)?.kind !== "iso"
       ? inspectEquation(proofState.value.context, activeProofTarget.value.equation, localDiagramRules.value)
       : undefined
   );
-  const homType = computed(() => (inspection.value ? prettyHom(inspection.value.hom) : ""));
-  const homTypeLatex = computed(() => (inspection.value ? latexHom(inspection.value.hom) : ""));
+  const activeIsoTarget = computed(() => {
+    const target = proofTargetGoalTarget(activeProofTarget.value);
+    return target?.kind === "iso" ? target : undefined;
+  });
+  const homType = computed(() =>
+    activeIsoTarget.value
+      ? prettyHom(activeIsoTarget.value.hom)
+      : inspection.value
+        ? prettyHom(inspection.value.hom)
+        : ""
+  );
+  const homTypeLatex = computed(() =>
+    activeIsoTarget.value
+      ? latexHom(activeIsoTarget.value.hom)
+      : inspection.value
+        ? latexHom(inspection.value.hom)
+        : ""
+  );
   const normalizedEquation = computed(() =>
     inspection.value ? prettyEquation(inspection.value.normalizedEquation) : ""
   );
@@ -126,6 +150,9 @@ export const useProofStore = defineStore("proof", () => {
     () => proofExamples.find((example) => example.id === selectedExampleId.value) ?? defaultExample
   );
   const tacticOptions = computed(() => {
+    const isoOptions = isoTacticOptions();
+    const productExtOptions = productExtTacticOptions();
+    const terminalExtOptions = terminalExtTacticOptions();
     const naturalityOptions =
       inspection.value?.availableRules
         .filter((rule) => rule.tags.includes("naturality") && /\.naturality\./.test(rule.id))
@@ -146,68 +173,105 @@ export const useProofStore = defineStore("proof", () => {
         description: `Rewrite once using ${rule.name}.`
       })) ?? [];
 
-    return [...baseTacticOptions, ...naturalityOptions, ...rewriteOptions];
+    return [...baseTacticOptions, ...isoOptions, ...productExtOptions, ...terminalExtOptions, ...naturalityOptions, ...rewriteOptions];
   });
   const diagram = computed<Diagram | undefined>(() => {
-    if (diagramProofState.value) {
-      return diagramProofState.value.diagram;
-    }
-
-    if (auxiliaryDiagram.value) {
-      return auxiliaryDiagram.value;
-    }
-
     try {
       const context = parseContext(contextText.value);
+
+      if (selectedDiagramSubgoal.value && diagramProofState.value) {
+        return diagramProofState.value.diagram;
+      }
+
+      if (selectedProofSubgoal.value) {
+        return baseDiagram(context, selectedProofSubgoal.value.equation);
+      }
+
+      if (activeGoal.value?.target.kind === "iso") {
+        return undefined;
+      }
+
+      if (diagramProofState.value) {
+        return diagramProofState.value.diagram;
+      }
+
+      if (auxiliaryDiagram.value) {
+        return auxiliaryDiagram.value;
+      }
+
       const equation = activeGoal.value?.equation ?? parseEquation(goalText.value, context);
       return baseDiagram(context, equation);
     } catch {
       return undefined;
     }
   });
-  const proofSubgoals = computed(() => proofState.value?.goals.filter((goal) => goal.parentGoalId) ?? []);
-  const diagramSubgoals = computed(() => diagramProofState.value?.subgoals ?? []);
-  const proofPanelSubgoals = computed(() => [...proofSubgoals.value, ...diagramSubgoals.value]);
   const diagramRegions = computed<DiagramRegionView[]>(() => {
     const currentDiagram = diagram.value;
     if (!currentDiagram) {
       return [];
     }
 
-    if (!diagramProofState.value) {
+    if (selectedProofSubgoal.value) {
       return describeRegions(currentDiagram.regions, currentDiagram);
     }
 
-    const regions = [...diagramProofState.value.diagram.regions];
-    const regionIds = new Set(regions.map((region) => region.id));
-    for (const region of splittableRegions(diagramProofState.value)) {
-      if (!regionIds.has(region.id)) {
-        regions.push(region);
-        regionIds.add(region.id);
+    if (diagramProofState.value) {
+      const regions = [...diagramProofState.value.diagram.regions];
+      const regionIds = new Set(regions.map((region) => region.id));
+      for (const region of splittableRegions(diagramProofState.value)) {
+        if (!regionIds.has(region.id)) {
+          regions.push(region);
+          regionIds.add(region.id);
+        }
       }
+
+      return describeRegions(regions, diagramProofState.value.diagram);
     }
 
-    return describeRegions(regions, diagramProofState.value.diagram);
+    return describeRegions(currentDiagram.regions, currentDiagram);
   });
+  const diagramSubgoals = computed(() => diagramProofState.value?.subgoals ?? []);
+  const proofPanelSubgoals = computed(() => [
+    ...proofSubgoalRows(),
+    ...diagramSubgoals.value.map((subgoal) => ({
+      ...subgoal,
+      depth: 0,
+      childCount: 0,
+      canComplete: false
+    }))
+  ]);
   const auxiliaryNodes = computed<DiagramNode[]>(() =>
     (diagram.value?.nodes ?? []).filter((node) => node.status === "auxiliary")
   );
   const auxiliaryArrows = computed<DiagramArrow[]>(() =>
     (diagram.value?.arrows ?? []).filter((arrow) => arrow.status === "auxiliary")
   );
-  const provedRegionIds = computed(() => diagramProofState.value?.provedRegionIds ?? []);
-  const selectedRegionId = computed(() => selectedDiagramSubgoal.value?.regionId ?? selectedDiagramRegionId.value);
+  const provedRegionIds = computed(() => (selectedProofSubgoal.value ? [] : diagramProofState.value?.provedRegionIds ?? []));
+  const selectedRegionId = computed(() => (selectedProofSubgoal.value ? undefined : selectedDiagramSubgoal.value?.regionId ?? selectedDiagramRegionId.value));
+  const completableProofTarget = computed(() => nearestCompletableProofTarget(selectedProofSubgoal.value) ?? activeGoal.value);
+  const proofChildrenForCompletableTarget = computed(() =>
+    proofState.value && completableProofTarget.value
+      ? proofState.value.goals.filter((goal) => goal.parentGoalId === completableProofTarget.value?.id)
+      : []
+  );
   const canCompleteByProductExt = computed(() =>
-    activeGoal.value?.status === "open" &&
-    proofSubgoals.value.some((subgoal) => subgoal.completion?.kind === "productExt") &&
-    proofSubgoals.value.every((subgoal) => subgoal.status === "proved")
+    completableProofTarget.value?.status === "open" &&
+    proofChildrenForCompletableTarget.value.some((subgoal) => subgoal.completion?.kind === "productExt") &&
+    proofChildrenForCompletableTarget.value.every((subgoal) => subgoal.status === "proved")
+  );
+  const canCompleteByIso = computed(() =>
+    completableProofTarget.value?.status === "open" &&
+    proofChildrenForCompletableTarget.value.some((subgoal) => subgoal.completion?.kind === "iso") &&
+    proofChildrenForCompletableTarget.value.every((subgoal) => subgoal.status === "proved")
   );
   const canCompleteByDiagramSubgoals = computed(() =>
     activeGoal.value?.status === "open" &&
     diagramSubgoals.value.length > 0 &&
     diagramSubgoals.value.every((subgoal) => subgoal.status === "proved")
   );
-  const canCompleteBySubgoals = computed(() => canCompleteByProductExt.value || canCompleteByDiagramSubgoals.value);
+  const canCompleteBySubgoals = computed(
+    () => canCompleteByProductExt.value || canCompleteByIso.value || canCompleteByDiagramSubgoals.value
+  );
   const canSplitGoal = computed(() => (diagramProofState.value ? splittableRegions(diagramProofState.value).length > 0 : false));
   const canAddAllRegionSubgoals = computed(() =>
     diagramRegions.value.some((region) => !region.isOuterGoal && !region.isSubgoal)
@@ -216,14 +280,23 @@ export const useProofStore = defineStore("proof", () => {
   function elaborate(): void {
     try {
       const context = parseContext(contextText.value);
-      const equation = parseEquation(goalText.value, context);
-      const goalDiagram = baseDiagram(context, equation);
-      proofState.value = createProofState(context, [createGoal("goal-1", equation)]);
+      const isoTarget = isIsoGoalText(goalText.value) ? parseIsoGoal(goalText.value, context) : undefined;
+      const equation = isoTarget
+        ? typecheckEquation(context, isoTarget.forward, isoTarget.forward)
+        : parseEquation(goalText.value, context);
+      const goalDiagram = isoTarget ? undefined : baseDiagram(context, equation);
+      proofState.value = createProofState(context, [
+        isoTarget ? createIsoGoal("goal-1", isoTarget, equation) : createGoal("goal-1", equation)
+      ]);
       auxiliaryDiagram.value = undefined;
-      diagramProofState.value = createDiagramProofState(goalDiagram);
+      diagramProofState.value = goalDiagram ? createDiagramProofState(goalDiagram) : undefined;
       selectedSubgoalId.value = undefined;
       selectedDiagramRegionId.value = undefined;
-      resetSelectedPaths(goalDiagram);
+      if (goalDiagram) {
+        resetSelectedPaths(goalDiagram);
+      } else {
+        clearSelectedPaths();
+      }
       isDirty.value = false;
       error.value = undefined;
     } catch (caught) {
@@ -249,8 +322,13 @@ export const useProofStore = defineStore("proof", () => {
 
       if (selectedProofSubgoal.value) {
         proofState.value = runTactic(proofState.value, selectedProofSubgoal.value.id, tacticText.value, localDiagramRules.value).state;
+        const activeProofSubgoal = proofState.value.goals.find(
+          (goal) => goal.parentGoalId && goal.id === proofState.value?.activeGoalId
+        );
         selectedSubgoalId.value =
-          proofState.value.goals.find((goal) => goal.parentGoalId && goal.status !== "proved")?.id ?? selectedProofSubgoal.value.id;
+          activeProofSubgoal?.id ??
+          proofState.value.goals.find((goal) => goal.parentGoalId && goal.status !== "proved")?.id ??
+          selectedProofSubgoal.value.id;
       } else if (selectedDiagramSubgoal.value) {
         proveSubgoal(selectedDiagramSubgoal.value.id);
       } else if (activeGoal.value) {
@@ -266,6 +344,21 @@ export const useProofStore = defineStore("proof", () => {
             activeGoal.value.id
           );
           auxiliaryDiagram.value = diagramProofState.value.diagram;
+          const step = {
+            id: `step-${proofState.value.proofLog.length + 1}`,
+            goalId: activeGoal.value.id,
+            tactic: tacticText.value.trim(),
+            before: activeGoal.value.equation,
+            after: activeGoal.value.equation,
+            message: `split by product extensionality for ${productExtMatch[1]}`
+          };
+          proofState.value = {
+            ...proofState.value,
+            goals: proofState.value.goals.map((goal) =>
+              goal.id === activeGoal.value?.id ? { ...goal, proofSteps: [...goal.proofSteps, step] } : goal
+            ),
+            proofLog: [...proofState.value.proofLog, step]
+          };
           selectedSubgoalId.value = diagramProofState.value.subgoals[0]?.id;
           error.value = undefined;
           return;
@@ -290,7 +383,6 @@ export const useProofStore = defineStore("proof", () => {
     goalText.value = example.goalText;
     tacticText.value = example.tacticText;
     elaborate();
-    resetAuxiliaryDefaultsForExample(example.id);
   }
 
   function selectDiagramArrow(arrowId: string): void {
@@ -343,6 +435,11 @@ export const useProofStore = defineStore("proof", () => {
       leftPath.value = region.leftPath;
       rightPath.value = region.rightPath;
     }
+  }
+
+  function clearSelectedPaths(): void {
+    leftPath.value = [];
+    rightPath.value = [];
   }
 
   function addAuxiliary(): void {
@@ -478,6 +575,83 @@ export const useProofStore = defineStore("proof", () => {
     selectedSubgoalId.value = undefined;
   }
 
+  function nearestCompletableProofTarget(start?: Goal): Goal | undefined {
+    if (!proofState.value) {
+      return undefined;
+    }
+
+    let current = start;
+    while (current) {
+      const children = proofState.value.goals.filter((goal) => goal.parentGoalId === current?.id);
+      if (children.length > 0 && children.every((child) => child.status === "proved")) {
+        return current;
+      }
+      current = current.parentGoalId
+        ? proofState.value.goals.find((goal) => goal.id === current?.parentGoalId)
+        : undefined;
+    }
+
+    return undefined;
+  }
+
+  function selectAfterCompletingProofTarget(completed: Goal): void {
+    if (!proofState.value) {
+      selectedSubgoalId.value = completed.parentGoalId ? completed.id : undefined;
+      return;
+    }
+
+    const nextOpenSibling = completed.parentGoalId
+      ? proofState.value.goals.find(
+          (goal) => goal.parentGoalId === completed.parentGoalId && goal.status !== "proved"
+        )
+      : undefined;
+    const nextOpenTopLevelSubgoal = proofState.value.goals.find(
+      (goal) => goal.parentGoalId === activeGoal.value?.id && goal.status !== "proved"
+    );
+
+    selectedSubgoalId.value =
+      nextOpenSibling?.id ??
+      nextOpenTopLevelSubgoal?.id ??
+      (completed.parentGoalId ? completed.parentGoalId : undefined);
+  }
+
+  function proofSubgoalRows(): Array<Goal & { depth: number; childCount: number; canComplete: boolean }> {
+    if (!proofState.value || !activeGoal.value) {
+      return [];
+    }
+
+    const rows: Array<Goal & { depth: number; childCount: number; canComplete: boolean }> = [];
+    const appendChildren = (parentId: string, depth: number): void => {
+      const children = proofState.value?.goals.filter((goal) => goal.parentGoalId === parentId) ?? [];
+      for (const child of children) {
+        const grandchildren = proofState.value?.goals.filter((goal) => goal.parentGoalId === child.id) ?? [];
+        rows.push({
+          ...child,
+          depth,
+          childCount: grandchildren.length,
+          canComplete: canCompleteProofTarget(child)
+        });
+        appendChildren(child.id, depth + 1);
+      }
+    };
+
+    appendChildren(activeGoal.value.id, 0);
+    return rows;
+  }
+
+  function canCompleteProofTarget(target: Goal): boolean {
+    if (!proofState.value || target.status !== "open") {
+      return false;
+    }
+
+    const children = proofState.value.goals.filter((goal) => goal.parentGoalId === target.id);
+    return (
+      children.length > 0 &&
+      children.every((child) => child.status === "proved") &&
+      children.some((child) => child.completion?.kind === "productExt" || child.completion?.kind === "iso")
+    );
+  }
+
   function addSelectedRegionSubgoal(): void {
     if (!selectedDiagramRegionId.value) {
       reportError("Select a diagram region first.");
@@ -528,22 +702,46 @@ export const useProofStore = defineStore("proof", () => {
     }
   }
 
-  function completeGoalBySubgoals(): void {
-    if (!proofState.value || !activeGoal.value) {
+  function completeGoalBySubgoals(targetId?: string): void {
+    if (!proofState.value || !activeGoal.value || !completableProofTarget.value) {
       return;
     }
+    const requestedTarget = targetId
+      ? proofState.value.goals.find((goal) => goal.id === targetId)
+      : undefined;
+    const targetToComplete = requestedTarget ?? completableProofTarget.value;
+    const targetChildren = proofState.value.goals.filter((goal) => goal.parentGoalId === targetToComplete.id);
+    const canCompleteRequestedByProductExt =
+      targetToComplete.status === "open" &&
+      targetChildren.some((subgoal) => subgoal.completion?.kind === "productExt") &&
+      targetChildren.every((subgoal) => subgoal.status === "proved");
+    const canCompleteRequestedByIso =
+      targetToComplete.status === "open" &&
+      targetChildren.some((subgoal) => subgoal.completion?.kind === "iso") &&
+      targetChildren.every((subgoal) => subgoal.status === "proved");
 
-    if (!canCompleteBySubgoals.value) {
+    if (!targetId && !canCompleteBySubgoals.value) {
+      reportError("Complete the subgoals before completing the main goal.");
+      return;
+    }
+    if (targetId && !canCompleteRequestedByProductExt && !canCompleteRequestedByIso) {
       reportError("Complete the subgoals before completing the main goal.");
       return;
     }
 
     try {
       const context = parseContext(contextText.value);
-      if (canCompleteByProductExt.value) {
-        const result = completeGoalByProductExt(proofState.value, activeGoal.value.id);
+      if (canCompleteRequestedByProductExt || (!targetId && canCompleteByProductExt.value)) {
+        const result = completeGoalByProductExt(proofState.value, targetToComplete.id);
         proofState.value = result.state;
-        selectedSubgoalId.value = undefined;
+        selectAfterCompletingProofTarget(result.goal);
+        error.value = undefined;
+        return;
+      }
+      if (canCompleteRequestedByIso || (!targetId && canCompleteByIso.value)) {
+        const result = completeGoalByIso(proofState.value, targetToComplete.id);
+        proofState.value = result.state;
+        selectAfterCompletingProofTarget(result.goal);
         error.value = undefined;
         return;
       }
@@ -656,14 +854,76 @@ export const useProofStore = defineStore("proof", () => {
     return `aux-${index}`;
   }
 
-  function resetAuxiliaryDefaultsForExample(exampleId: string): void {
-    if (exampleId === "vertical-composite-naturality") {
-      auxiliaryArrowId.value = "g-mid";
-      auxiliaryFrom.value = "rhs-node-1";
-      auxiliaryTo.value = "lhs-node-2";
-      auxiliaryTermText.value = "G.map(f)";
-      activeAuxiliaryEndpoint.value = "from";
+  function proofTargetText(target: (Pick<Goal, "target" | "equation"> | { target?: GoalTarget; equation: ReturnType<typeof parseEquation> }) | undefined): string {
+    if (!target) {
+      return "";
     }
+    const goalTarget = proofTargetGoalTarget(target);
+    return goalTarget ? prettyGoalTarget(goalTarget) : prettyEquation(target.equation);
+  }
+
+  function proofTargetLatex(target: (Pick<Goal, "target" | "equation"> | { target?: GoalTarget; equation: ReturnType<typeof parseEquation> }) | undefined): string {
+    if (!target) {
+      return "";
+    }
+    const goalTarget = proofTargetGoalTarget(target);
+    return goalTarget ? latexGoalTarget(goalTarget) : latexEquation(target.equation);
+  }
+
+  function proofTargetGoalTarget(target: { equation: ReturnType<typeof parseEquation>; target?: GoalTarget } | undefined): GoalTarget | undefined {
+    return target && "target" in target ? target.target : undefined;
+  }
+
+  function productExtTacticOptions() {
+    if (
+      !proofState.value ||
+      !activeProofTarget.value ||
+      proofTargetGoalTarget(activeProofTarget.value)?.kind === "iso" ||
+      activeProofTarget.value.status !== "open"
+    ) {
+      return [];
+    }
+
+    const target = activeProofTarget.value.equation.hom.target;
+    return proofState.value.context.decls
+      .filter((decl): decl is ProductDecl => decl.kind === "productDecl" && equalObject(decl.product, target))
+      .map((decl) => ({
+        id: `product_ext:${decl.product.name}`,
+        label: `product_ext ${decl.product.name}`,
+        command: `product_ext ${decl.product.name}`,
+        description: `Split this goal into the two projection subgoals for ${decl.product.name}.`
+      }));
+  }
+
+  function isoTacticOptions() {
+    if (!activeProofTarget.value || activeProofTarget.value.status !== "open" || proofTargetGoalTarget(activeProofTarget.value)?.kind !== "iso") {
+      return [];
+    }
+
+    return [
+      {
+        id: "iso",
+        label: "iso",
+        command: "iso",
+        description: "Split this isomorphism goal into the two inverse-law subgoals."
+      }
+    ];
+  }
+
+  function terminalExtTacticOptions() {
+    if (!proofState.value || !activeProofTarget.value || activeProofTarget.value.status !== "open") {
+      return [];
+    }
+
+    const target = activeProofTarget.value.equation.hom.target;
+    return proofState.value.context.decls
+      .filter((decl): decl is TerminalDecl => decl.kind === "terminalDecl" && equalObject(decl.terminal, target))
+      .map((decl) => ({
+        id: `terminal_ext:${decl.terminal.name}`,
+        label: `terminal_ext ${decl.terminal.name}`,
+        command: `terminal_ext ${decl.terminal.name}`,
+        description: `Close this goal by uniqueness of maps into ${decl.terminal.name}.`
+      }));
   }
 
   function describeRegions(regions: DiagramRegion[], currentDiagram: Diagram): DiagramRegionView[] {

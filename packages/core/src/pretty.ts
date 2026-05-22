@@ -1,7 +1,17 @@
+import type { GoalTarget } from "./proofState";
 import type { Equation, HomType, ObjectExpr, Term } from "./syntax";
 
 export function prettyEquation(equation: Equation): string {
   return `${prettyTerm(equation.lhs)} = ${prettyTerm(equation.rhs)}`;
+}
+
+export function prettyGoalTarget(target: GoalTarget): string {
+  switch (target.kind) {
+    case "equation":
+      return prettyEquation(target.equation);
+    case "iso":
+      return `iso ${prettyTerm(target.forward)} with ${prettyTerm(target.inverse)}`;
+  }
 }
 
 export function prettyTerm(term: Term): string {
@@ -24,6 +34,8 @@ export function prettyTerm(term: Term): string {
       return term.side === "left" ? `pi1(${term.product.name})` : `pi2(${term.product.name})`;
     case "productPair":
       return `<${prettyTerm(term.left)}, ${prettyTerm(term.right)}>_${term.product.name}`;
+    case "terminalMap":
+      return `terminalMap(${term.terminal.name}, ${prettyObject(term.source)})`;
   }
 }
 
@@ -45,6 +57,15 @@ export function prettyHom(hom: HomType): string {
 
 export function latexEquation(equation: Equation): string {
   return `${latexTerm(equation.lhs)} = ${latexTerm(equation.rhs)}`;
+}
+
+export function latexGoalTarget(target: GoalTarget): string {
+  switch (target.kind) {
+    case "equation":
+      return latexEquation(target.equation);
+    case "iso":
+      return `\\operatorname{iso}\\left(${latexTerm(target.forward)}, ${latexTerm(target.inverse)}\\right)`;
+  }
 }
 
 export function latexTerm(term: Term): string {
@@ -69,6 +90,8 @@ export function latexTerm(term: Term): string {
         : `\\pi^{${latexObject(term.product)}}_{2}`;
     case "productPair":
       return `\\left\\langle ${latexTerm(term.left)}, ${latexTerm(term.right)} \\right\\rangle_{${latexObject(term.product)}}`;
+    case "terminalMap":
+      return `!^{${latexObject(term.terminal)}}_{${latexObject(term.source)}}`;
   }
 }
 

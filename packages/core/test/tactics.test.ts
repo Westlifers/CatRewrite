@@ -4,7 +4,10 @@ import {
   category,
   comp,
   createGoal,
+  createIsoGoal,
   createProofState,
+  completeGoalByIso,
+  completeGoalByProductExt,
   counit,
   functor,
   functorObject,
@@ -14,6 +17,7 @@ import {
   object,
   parseContext,
   parseEquation,
+  parseIsoGoal,
   runTactic,
   type Context,
   typecheckEquation,
@@ -93,5 +97,36 @@ morphism f : X -> Y
 
     expect(result.goal.status).toBe("proved");
     expect(result.step.message).toBe("try closed the goal using alpha.naturality.f");
+  });
+
+  it("splits an explicit inverse candidate into iso subgoals", () => {
+    const isoContext = parseContext(`
+category C
+object A : C
+terminal One : C
+product P of One A
+`);
+    const target = parseIsoGoal("iso pi2(P) with <terminalMap(One, A), id(A)>", isoContext);
+    const state = createProofState(isoContext, [
+      createIsoGoal("goal-1", target, typecheckEquation(isoContext, target.forward, target.forward))
+    ]);
+    const split = runTactic(state, "goal-1", "iso");
+
+    expect(split.state.goals.map((goal) => goal.id)).toEqual([
+      "goal-1",
+      "goal-1.left-inverse",
+      "goal-1.right-inverse"
+    ]);
+    expect(split.state.goals.find((goal) => goal.id === "goal-1.left-inverse")?.completion?.kind).toBe("iso");
+
+    const leftProductSplit = runTactic(split.state, "goal-1.left-inverse", "product_ext P");
+    const leftTerminal = runTactic(leftProductSplit.state, "goal-1.left-inverse.pi1", "terminal_ext One");
+    const leftProjection = runTactic(leftTerminal.state, "goal-1.left-inverse.pi2", "try");
+    const leftComplete = completeGoalByProductExt(leftProjection.state, "goal-1.left-inverse");
+    const right = runTactic(leftComplete.state, "goal-1.right-inverse", "try");
+    const completed = completeGoalByIso(right.state, "goal-1");
+
+    expect(completed.goal.status).toBe("proved");
+    expect(completed.step.message).toContain("completed isomorphism proof");
   });
 });

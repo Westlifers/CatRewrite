@@ -414,6 +414,6 @@ function deleteContextMenuTarget(): void {
         <button type="button" @click="deleteContextMenuTarget">Delete</button>
       </div>
     </div>
-    <p v-else class="muted">A diagram appears when the context contains an adjunction and a morphism named f.</p>
+    <p v-else class="muted">This proof target has no equation diagram. Split it into equation subgoals to view diagrams.</p>
   </section>
 </template>

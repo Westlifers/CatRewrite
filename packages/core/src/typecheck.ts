@@ -1,5 +1,13 @@
 import { equalCategory, equalHom, equalObject, objectCategory } from "./equality";
-import { functorObject, type Context, type Equation, type HomType, type ProductDecl, type Term } from "./syntax";
+import {
+  functorObject,
+  type Context,
+  type Equation,
+  type HomType,
+  type ProductDecl,
+  type Term,
+  type TerminalDecl
+} from "./syntax";
 
 export class TypecheckError extends Error {
   readonly kind = "typecheckError";
@@ -100,6 +108,18 @@ export function inferTerm(_ctx: Context, term: Term): HomType {
         target: product.product
       };
     }
+
+    case "terminalMap": {
+      const terminal = requireTerminalDecl(_ctx, term.terminal);
+      if (!equalCategory(objectCategory(term.source), objectCategory(terminal.terminal))) {
+        throw new TypecheckError("Cannot form terminal map: source is not in the terminal object's category.");
+      }
+
+      return {
+        source: term.source,
+        target: terminal.terminal
+      };
+    }
   }
 }
 
@@ -121,6 +141,17 @@ function requireProductDecl(ctx: Context, product: ProductDecl["product"]): Prod
   );
   if (!decl) {
     throw new TypecheckError(`Unknown product object: ${product.name}`);
+  }
+  return decl;
+}
+
+function requireTerminalDecl(ctx: Context, terminal: TerminalDecl["terminal"]): TerminalDecl {
+  const decl = ctx.decls.find(
+    (candidate): candidate is TerminalDecl =>
+      candidate.kind === "terminalDecl" && equalObject(candidate.terminal, terminal)
+  );
+  if (!decl) {
+    throw new TypecheckError(`Unknown terminal object: ${terminal.name}`);
   }
   return decl;
 }

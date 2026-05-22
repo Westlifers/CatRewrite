@@ -10,6 +10,7 @@ export function normalizeTerm(ctx: Context, term: Term): Term {
     case "counit":
     case "component":
     case "productProjection":
+    case "terminalMap":
       return term;
 
     case "productPair":

@@ -11,6 +11,7 @@ export interface ObjectVarExpr {
     left: ObjectExpr;
     right: ObjectExpr;
   };
+  terminal?: true;
 }
 
 export interface FunctorExpr {
@@ -101,6 +102,12 @@ export interface ProductPairTerm {
   right: Term;
 }
 
+export interface TerminalMapTerm {
+  kind: "terminalMap";
+  terminal: ObjectVarExpr;
+  source: ObjectExpr;
+}
+
 export type Term =
   | VarTerm
   | IdTerm
@@ -110,7 +117,8 @@ export type Term =
   | CounitTerm
   | ComponentTerm
   | ProductProjectionTerm
-  | ProductPairTerm;
+  | ProductPairTerm
+  | TerminalMapTerm;
 
 export interface Equation {
   lhs: Term;
@@ -122,6 +130,7 @@ export type Decl =
   | CategoryDecl
   | ObjectDecl
   | ProductDecl
+  | TerminalDecl
   | FunctorDecl
   | NatTransDecl
   | MorphismDecl
@@ -143,6 +152,11 @@ export interface ProductDecl {
   product: ObjectVarExpr;
   left: ObjectExpr;
   right: ObjectExpr;
+}
+
+export interface TerminalDecl {
+  kind: "terminalDecl";
+  terminal: ObjectVarExpr;
 }
 
 export interface FunctorDecl {
@@ -188,6 +202,13 @@ export const productObject = (name: string, category: CategoryExpr, left: Object
   name,
   category,
   productFactors: { left, right }
+});
+
+export const terminalObject = (name: string, category: CategoryExpr): ObjectVarExpr => ({
+  kind: "object",
+  name,
+  category,
+  terminal: true
 });
 
 export const functor = (
@@ -273,6 +294,12 @@ export const productPair = (product: ObjectVarExpr, left: Term, right: Term): Pr
   product,
   left,
   right
+});
+
+export const terminalMap = (terminal: ObjectVarExpr, source: ObjectExpr): TerminalMapTerm => ({
+  kind: "terminalMap",
+  terminal,
+  source
 });
 
 export const emptyContext = (): Context => ({ decls: [] });

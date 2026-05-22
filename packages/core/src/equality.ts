@@ -93,5 +93,7 @@ export function equalTerm(left: Term, right: Term): boolean {
         equalTerm(left.left, right.left) &&
         equalTerm(left.right, right.right)
       );
+    case "terminalMap":
+      return right.kind === "terminalMap" && equalObject(left.terminal, right.terminal) && equalObject(left.source, right.source);
   }
 }

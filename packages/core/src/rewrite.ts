@@ -7,6 +7,7 @@ import {
   map,
   productPair,
   productProjection,
+  terminalMap,
   unit,
   type AdjunctionExpr,
   type Context,
@@ -51,7 +52,8 @@ export type PatternTerm =
   | PatternCounitTerm
   | PatternComponentTerm
   | PatternProductProjectionTerm
-  | PatternProductPairTerm;
+  | PatternProductPairTerm
+  | PatternTerminalMapTerm;
 
 export interface PatternTermVar {
   kind: "termPattern";
@@ -104,6 +106,12 @@ export interface PatternProductPairTerm {
   product: ObjectVarExpr;
   left: PatternTerm;
   right: PatternTerm;
+}
+
+export interface PatternTerminalMapTerm {
+  kind: "terminalMap";
+  terminal: ObjectVarExpr;
+  source: PatternObject;
 }
 
 export interface RewriteRule {
@@ -159,6 +167,7 @@ export function applyRewriteOnce(term: Term, rules: RewriteRule[]): RewriteResul
     case "counit":
     case "component":
     case "productProjection":
+    case "terminalMap":
       return undefined;
 
     case "productPair": {
@@ -286,6 +295,10 @@ function matchTermWithEnv(pattern: PatternTerm, term: Term, env: MatchEnv): Matc
       const leftEnv = matchTermWithEnv(pattern.left, term.left, env);
       return leftEnv ? matchTermWithEnv(pattern.right, term.right, leftEnv) : undefined;
     }
+    case "terminalMap":
+      return term.kind === "terminalMap" && equalObject(pattern.terminal, term.terminal)
+        ? matchObjectWithEnv(pattern.source, term.source, env)
+        : undefined;
   }
 }
 
@@ -357,6 +370,8 @@ function instantiateTerm(pattern: PatternTerm, env: MatchEnv): Term {
       return productProjection(pattern.product, pattern.side);
     case "productPair":
       return productPair(pattern.product, instantiateTerm(pattern.left, env), instantiateTerm(pattern.right, env));
+    case "terminalMap":
+      return terminalMap(pattern.terminal, instantiateObject(pattern.source, env));
   }
 }
 

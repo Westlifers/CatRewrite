@@ -10,10 +10,26 @@ describe("proof examples", () => {
     expect(state.proofLog).toHaveLength(1);
   });
 
-  it("includes a split-first vertical composite naturality example", () => {
-    const example = proofExamples.find((candidate) => candidate.id === "vertical-composite-naturality");
+  it("keeps the curated example set focused", () => {
+    expect(proofExamples.map((example) => example.id)).toEqual([
+      "transpose-counit",
+      "product-pairing-precompose",
+      "terminal-product-right-unitor"
+    ]);
+  });
+
+  it("includes a split-first pairing example", () => {
+    const example = proofExamples.find((candidate) => candidate.id === "product-pairing-precompose");
 
     expect(example?.provesWithTactic).toBe(false);
-    expect(example?.goalText).toBe("F.map(f) >> alpha_Y >> beta_Y = alpha_X >> beta_X >> H.map(f)");
+    expect(example?.goalText).toBe("h >> <f, g> = <h >> f, h >> g>");
+  });
+
+  it("includes a terminal product unitor example encoded as an inverse law", () => {
+    const example = proofExamples.find((candidate) => candidate.id === "terminal-product-right-unitor");
+
+    expect(example?.provesWithTactic).toBe(false);
+    expect(example?.goalText).toBe("iso pi2(P) with <terminalMap(One, A), id(A)>");
+    expect(example?.tacticText).toBe("iso");
   });
 });

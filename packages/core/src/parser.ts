@@ -11,6 +11,8 @@ import {
   productObject,
   productPair,
   productProjection,
+  terminalMap,
+  terminalObject,
   unit,
   type AdjunctionExpr,
   type Context,
@@ -19,11 +21,13 @@ import {
   type ObjectExpr,
   type ObjectVarExpr,
   type ProductDecl,
+  type TerminalDecl,
   type Term
 } from "./syntax";
 import { comp, id, map } from "./syntax";
 import { equalCategory, equalObject, objectCategory } from "./equality";
 import { inferTerm, typecheckEquation } from "./typecheck";
+import { type IsoTarget } from "./proofState";
 
 export class ParseError extends Error {
   readonly kind = "parseError";
@@ -76,6 +80,14 @@ export function parseContext(input: string): Context {
       const parsed = productObject(productMatch[1], leftCategory, left, right);
       env.objects.set(parsed.name, parsed);
       ctx.decls.push({ kind: "productDecl", product: parsed, left, right });
+      continue;
+    }
+
+    const terminalMatch = /^terminal\s+([A-Za-z][A-Za-z0-9_]*)\s*:\s*([A-Za-z][A-Za-z0-9_]*)$/.exec(line);
+    if (terminalMatch) {
+      const parsed = terminalObject(terminalMatch[1], requireMap(env.categories, terminalMatch[2], "category"));
+      env.objects.set(parsed.name, parsed);
+      ctx.decls.push({ kind: "terminalDecl", terminal: parsed });
       continue;
     }
 
@@ -148,6 +160,32 @@ export function parseEquation(input: string, ctx: Context) {
   return typecheckEquation(ctx, parseTerm(parts[0], ctx), parseTerm(parts[1], ctx));
 }
 
+export function parseIsoGoal(input: string, ctx: Context): IsoTarget {
+  const match = /^iso\s+(.+)\s+with\s+(.+)$/.exec(input.trim());
+  if (!match) {
+    throw new ParseError("Expected an iso goal of the form 'iso f with g'.");
+  }
+
+  const forward = parseTerm(match[1], ctx);
+  const inverse = parseTerm(match[2], ctx);
+  const forwardHom = inferTerm(ctx, forward);
+  const inverseHom = inferTerm(ctx, inverse);
+  if (!equalObject(forwardHom.source, inverseHom.target) || !equalObject(forwardHom.target, inverseHom.source)) {
+    throw new ParseError("Iso goal requires inverse candidate with reversed hom-type.");
+  }
+
+  return {
+    kind: "iso",
+    forward,
+    inverse,
+    hom: forwardHom
+  };
+}
+
+export function isIsoGoalText(input: string): boolean {
+  return /^iso\s+.+\s+with\s+.+$/.test(input.trim());
+}
+
 export function parseTerm(input: string, ctx: Context): Term {
   const trimmed = stripOuterParens(input.trim());
   const pieces = splitTopLevel(trimmed, ">>");
@@ -202,6 +240,11 @@ export function parseTerm(input: string, ctx: Context): Term {
     return productPair(product.product, left, right);
   }
 
+  const terminalMapMatch = /^terminalMap\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*(.+)\)$/.exec(trimmed);
+  if (terminalMapMatch) {
+    return terminalMap(requireTerminal(ctx, terminalMapMatch[1]).terminal, parseObjectExpr(terminalMapMatch[2], ctx));
+  }
+
   const morph = findMorphism(ctx, trimmed);
   if (morph) {
     return morph;
@@ -227,6 +270,12 @@ export function parseObjectExpr(input: string, ctx: Context): ObjectExpr {
     const productDecl = ctx.decls.find((decl): decl is ProductDecl => decl.kind === "productDecl" && decl.product.name === parts[0]);
     if (productDecl) {
       return productDecl.product;
+    }
+    const terminalDecl = ctx.decls.find(
+      (decl): decl is TerminalDecl => decl.kind === "terminalDecl" && decl.terminal.name === parts[0]
+    );
+    if (terminalDecl) {
+      return terminalDecl.terminal;
     }
     throw new ParseError(`Unknown object: ${parts[0]}`);
   }
@@ -295,6 +344,16 @@ function requireProduct(ctx: Context, name: string): ProductDecl {
   const decl = ctx.decls.find((candidate): candidate is ProductDecl => candidate.kind === "productDecl" && candidate.product.name === name);
   if (!decl) {
     throw new ParseError(`Unknown product: ${name}`);
+  }
+  return decl;
+}
+
+function requireTerminal(ctx: Context, name: string): TerminalDecl {
+  const decl = ctx.decls.find(
+    (candidate): candidate is TerminalDecl => candidate.kind === "terminalDecl" && candidate.terminal.name === name
+  );
+  if (!decl) {
+    throw new ParseError(`Unknown terminal object: ${name}`);
   }
   return decl;
 }

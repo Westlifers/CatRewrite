@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { latexEquation, prettyEquation, type Equation, type ProofStep } from "@catrewrite/core";
-import { computed } from "vue";
+import { latexEquation, latexGoalTarget, prettyEquation, prettyGoalTarget, type Equation, type GoalTarget, type ProofStep } from "@catrewrite/core";
+import { computed, ref } from "vue";
 import MathText from "./MathText.vue";
 
 export interface ProofSubgoalView {
   id: string;
+  parentGoalId?: string;
+  depth?: number;
+  childCount?: number;
+  canComplete?: boolean;
+  target?: GoalTarget;
   equation: Equation;
   status: "open" | "proved" | "failed";
   proofSteps: ProofStep[];
@@ -23,14 +28,45 @@ const props = defineProps<{
 defineEmits<{
   selectTarget: [subgoalId?: string];
   proveSubgoal: [subgoalId: string];
-  completeGoal: [];
+  completeGoal: [subgoalId?: string];
 }>();
 
 const provedCount = computed(() => props.subgoals.filter((subgoal) => subgoal.status === "proved").length);
+const collapsedIds = ref(new Set<string>());
+const visibleSubgoals = computed(() =>
+  props.subgoals.filter((subgoal) => {
+    let parentId = subgoal.parentGoalId;
+    while (parentId) {
+      if (collapsedIds.value.has(parentId)) {
+        return false;
+      }
+      parentId = props.subgoals.find((candidate) => candidate.id === parentId)?.parentGoalId;
+    }
+    return true;
+  })
+);
 
 function proofSummary(steps: ProofStep[]): string {
   const step = steps.at(-1);
   return step ? step.message : "No proof step yet";
+}
+
+function targetText(subgoal: ProofSubgoalView): string {
+  return subgoal.target ? prettyGoalTarget(subgoal.target) : prettyEquation(subgoal.equation);
+}
+
+function targetLatex(subgoal: ProofSubgoalView): string {
+  return subgoal.target ? latexGoalTarget(subgoal.target) : latexEquation(subgoal.equation);
+}
+
+function toggleCollapsed(subgoalId: string): void {
+  const next = new Set(collapsedIds.value);
+  if (next.has(subgoalId)) {
+    next.delete(subgoalId);
+  } else {
+    next.add(subgoalId);
+  }
+  collapsedIds.value = next;
 }
 </script>
 
@@ -45,7 +81,7 @@ function proofSummary(steps: ProofStep[]): string {
       </div>
       <div class="button-row">
         <button type="button" :disabled="!canCompleteBySubgoals" @click="$emit('completeGoal')">
-          Complete Goal
+          Complete Main
         </button>
       </div>
     </div>
@@ -62,22 +98,43 @@ function proofSummary(steps: ProofStep[]): string {
         <p class="proof-summary">{{ proofSummary(mainProofSteps) }}</p>
       </li>
       <li
-        v-for="subgoal in subgoals"
+        v-for="subgoal in visibleSubgoals"
         :key="subgoal.id"
         :class="{ active: selectedSubgoalId === subgoal.id }"
+        :style="{ marginLeft: `${(subgoal.depth ?? 0) * 18}px` }"
         @click="$emit('selectTarget', subgoal.id)"
       >
         <div class="subgoal-header">
-          <strong>{{ subgoal.id }}</strong>
+          <strong>
+            <button
+              v-if="subgoal.childCount"
+              type="button"
+              class="collapse-button"
+              @click.stop="toggleCollapsed(subgoal.id)"
+            >
+              {{ collapsedIds.has(subgoal.id) ? "+" : "-" }}
+            </button>
+            {{ subgoal.id }}
+          </strong>
           <span :data-status="subgoal.status">{{ subgoal.status }}</span>
         </div>
         <div class="math-block">
-          <MathText :latex="latexEquation(subgoal.equation)" :fallback="prettyEquation(subgoal.equation)" />
+          <MathText :latex="targetLatex(subgoal)" :fallback="targetText(subgoal)" />
         </div>
         <p class="proof-summary">{{ proofSummary(subgoal.proofSteps) }}</p>
-        <button type="button" :disabled="subgoal.status === 'proved'" @click.stop="$emit('proveSubgoal', subgoal.id)">
-          Prove
-        </button>
+        <div class="button-row subgoal-actions">
+          <button type="button" :disabled="subgoal.status === 'proved'" @click.stop="$emit('proveSubgoal', subgoal.id)">
+            Prove
+          </button>
+          <button
+            v-if="subgoal.childCount"
+            type="button"
+            :disabled="!subgoal.canComplete"
+            @click.stop="$emit('completeGoal', subgoal.id)"
+          >
+            Complete
+          </button>
+        </div>
       </li>
     </ol>
   </section>

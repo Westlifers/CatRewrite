@@ -1,9 +1,11 @@
 import { equalObject, equalTerm } from "./equality";
 import { generatedRules } from "./inspect";
 import { normalizeTerm } from "./normalize";
+import { parseIsoGoal } from "./parser";
+import { prettyTerm } from "./pretty";
 import type { Goal, ProofState, ProofStep } from "./proofState";
 import { applyRewriteOnce, simplify, type RewriteRule, type RuleTag } from "./rewrite";
-import { comp, productProjection, type Equation, type ProductDecl, type Term } from "./syntax";
+import { comp, productProjection, type Equation, type ProductDecl, type Term, type TerminalDecl } from "./syntax";
 import { inferTerm, typecheckEquation } from "./typecheck";
 
 interface TacticComputation {
@@ -63,6 +65,18 @@ export function runTactic(state: ProofState, goalId: string, tactic: string, rul
     extraGoals = result.goals;
     activeGoalId = result.goals[0]?.id ?? activeGoalId;
     message = `split by product_ext ${productName} into ${result.goals.map((child) => child.id).join(" and ")}`;
+  } else if (command.startsWith("terminal_ext ")) {
+    const terminalName = command.slice("terminal_ext ".length).trim();
+    closeByTerminalExt(state, goal, terminalName);
+    after = before;
+    closed = true;
+    message = `closed by terminal uniqueness for ${terminalName}`;
+  } else if (command === "iso" || command.startsWith("iso ")) {
+    const result = splitIsoGoals(state, goal, command);
+    after = before;
+    extraGoals = result.goals;
+    activeGoalId = result.goals[0]?.id ?? activeGoalId;
+    message = `split iso proof into ${result.goals.map((child) => child.id).join(" and ")}`;
   } else if (command.startsWith("rw ")) {
     const ruleName = command.slice(3).trim();
     after = rewriteEquationOnce(state, before, ruleName, generatedRules(state.context, rules));
@@ -106,6 +120,64 @@ export function runTactic(state: ProofState, goalId: string, tactic: string, rul
     },
     goal: updatedGoal,
     step
+  };
+}
+
+function splitIsoGoals(state: ProofState, goal: Goal, command: string): { goals: Goal[] } {
+  const isoTarget = command === "iso" && goal.target.kind === "iso" ? goal.target : parseIsoGoal(command, state.context);
+  if (goal.target.kind !== "iso" && command === "iso") {
+    throw new Error(`Unsupported iso tactic: ${command}`);
+  }
+  if (state.goals.some((candidate) => candidate.parentGoalId === goal.id)) {
+    throw new Error(`Goal ${goal.id} already has subgoals.`);
+  }
+
+  const forward = isoTarget.forward;
+  const inverse = isoTarget.inverse;
+  const forwardHom = inferTerm(state.context, forward);
+  const inverseHom = inferTerm(state.context, inverse);
+
+  if (!equalObject(forwardHom.source, inverseHom.target) || !equalObject(forwardHom.target, inverseHom.source)) {
+    throw new Error("iso tactic requires inverse candidate with reversed hom-type.");
+  }
+
+  return {
+    goals: [
+      {
+        id: `${goal.id}.left-inverse`,
+        equation: typecheckEquation(state.context, comp(forward, inverse), { kind: "id", object: forwardHom.source }),
+        target: {
+          kind: "equation",
+          equation: typecheckEquation(state.context, comp(forward, inverse), { kind: "id", object: forwardHom.source })
+        },
+        status: "open",
+        proofSteps: [],
+        parentGoalId: goal.id,
+        completion: {
+          kind: "iso",
+          side: "leftInverse",
+          forwardName: prettyTerm(forward),
+          inverseName: prettyTerm(inverse)
+        }
+      },
+      {
+        id: `${goal.id}.right-inverse`,
+        equation: typecheckEquation(state.context, comp(inverse, forward), { kind: "id", object: forwardHom.target }),
+        target: {
+          kind: "equation",
+          equation: typecheckEquation(state.context, comp(inverse, forward), { kind: "id", object: forwardHom.target })
+        },
+        status: "open",
+        proofSteps: [],
+        parentGoalId: goal.id,
+        completion: {
+          kind: "iso",
+          side: "rightInverse",
+          forwardName: prettyTerm(forward),
+          inverseName: prettyTerm(inverse)
+        }
+      }
+    ]
   };
 }
 
@@ -167,6 +239,7 @@ function productExtGoal(state: ProofState, goal: Goal, product: ProductDecl, sid
 
   return {
     id: `${goal.id}.${suffix}`,
+    target: { kind: "equation", equation },
     equation,
     status: "open",
     proofSteps: [],
@@ -220,6 +293,24 @@ function requireProductDecl(state: ProofState, name: string): ProductDecl {
   return decl;
 }
 
+function closeByTerminalExt(state: ProofState, goal: Goal, terminalName: string): void {
+  const terminal = requireTerminalDecl(state, terminalName);
+  const hom = inferTerm(state.context, goal.equation.lhs);
+  if (!equalObject(hom.target, terminal.terminal)) {
+    throw new Error(`terminal_ext ${terminalName} applies only to goals whose target is ${terminalName}.`);
+  }
+}
+
+function requireTerminalDecl(state: ProofState, name: string): TerminalDecl {
+  const decl = state.context.decls.find(
+    (candidate): candidate is TerminalDecl => candidate.kind === "terminalDecl" && candidate.terminal.name === name
+  );
+  if (!decl) {
+    throw new Error(`Unknown terminal object: ${name}`);
+  }
+  return decl;
+}
+
 export function completeGoalByProductExt(state: ProofState, goalId = rootGoalId(state)): TacticResult {
   if (!goalId) {
     throw new Error("No goal to complete by product extensionality.");
@@ -245,7 +336,13 @@ export function completeGoalByProductExt(state: ProofState, goalId = rootGoalId(
     throw new Error(`Cannot complete product_ext with open subgoals: ${openChildren.map((child) => child.id).join(", ")}`);
   }
 
-  const productNames = [...new Set(children.map((child) => child.completion?.productName).filter(Boolean))];
+  const productNames = [
+    ...new Set(
+      children
+        .map((child) => (child.completion?.kind === "productExt" ? child.completion.productName : undefined))
+        .filter(Boolean)
+    )
+  ];
   const productName = productNames[0] ?? "product";
   const step: ProofStep = {
     id: `step-${state.proofLog.length + 1}`,
@@ -269,6 +366,60 @@ export function completeGoalByProductExt(state: ProofState, goalId = rootGoalId(
 
   return {
     state: updatedState,
+    goal: updatedGoal,
+    step
+  };
+}
+
+export function completeGoalByIso(state: ProofState, goalId = rootGoalId(state)): TacticResult {
+  if (!goalId) {
+    throw new Error("No goal to complete by isomorphism.");
+  }
+
+  const goal = state.goals.find((candidate) => candidate.id === goalId);
+  if (!goal) {
+    throw new Error(`Unknown goal: ${goalId}`);
+  }
+  if (goal.status === "proved") {
+    throw new Error(`Goal is already proved: ${goalId}`);
+  }
+
+  const children = state.goals.filter(
+    (candidate) => candidate.parentGoalId === goalId && candidate.completion?.kind === "iso"
+  );
+  if (children.length !== 2) {
+    throw new Error(`Goal ${goalId} does not have iso subgoals.`);
+  }
+
+  const openChildren = children.filter((child) => child.status !== "proved");
+  if (openChildren.length > 0) {
+    throw new Error(`Cannot complete iso proof with open subgoals: ${openChildren.map((child) => child.id).join(", ")}`);
+  }
+
+  const iso = children[0].completion?.kind === "iso" ? children[0].completion : undefined;
+  const forwardName = iso?.forwardName ?? "forward";
+  const inverseName = iso?.inverseName ?? "inverse";
+  const step: ProofStep = {
+    id: `step-${state.proofLog.length + 1}`,
+    goalId,
+    tactic: `complete iso ${forwardName} with ${inverseName}`,
+    before: goal.equation,
+    after: goal.equation,
+    message: `completed isomorphism proof for ${forwardName} with inverse ${inverseName} using ${children.map((child) => child.id).join(" and ")}`
+  };
+  const updatedGoal: Goal = {
+    ...goal,
+    status: "proved",
+    proofSteps: [...goal.proofSteps, step]
+  };
+
+  return {
+    state: {
+      ...state,
+      goals: state.goals.map((candidate) => (candidate.id === goalId ? updatedGoal : candidate)),
+      activeGoalId: goalId,
+      proofLog: [...state.proofLog, step]
+    },
     goal: updatedGoal,
     step
   };
